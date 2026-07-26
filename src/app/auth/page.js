@@ -156,7 +156,7 @@ export default function AuthPage() {
   };
 
   return (
-    <div className="fixed inset-0 flex flex-col justify-between overflow-hidden">
+    <div className="fixed inset-0 flex flex-col justify-between overflow-y-auto custom-scroll">
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[350px] bg-gradient-to-b from-[#e2f0ff]/60 via-purple-100/30 to-transparent blur-3xl -z-10 pointer-events-none" />
       <WaveBackground />
 
@@ -170,9 +170,9 @@ export default function AuthPage() {
         </Link>
       </header>
 
-      {/* Main */}
-      <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-1 sm:py-3 my-auto flex-1 flex flex-col justify-center items-center z-10 overflow-hidden min-h-0">
-        <div className="w-full max-w-lg glass-panel-landing rounded-2xl sm:rounded-3xl p-4 sm:p-7 shadow-[0_10px_30px_-5px_rgba(0,0,0,0.05),0_0_0_1px_#e8e8e8] border border-slate-200/80 relative overflow-y-auto max-h-full transition-all duration-300 my-auto">
+      {/* Main Content */}
+      <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6 my-auto flex-1 flex flex-col justify-center items-center z-10 min-h-0">
+        <div className="w-full max-w-lg glass-panel-landing rounded-2xl sm:rounded-3xl p-4 sm:p-7 shadow-[0_10px_30px_-5px_rgba(0,0,0,0.05),0_0_0_1px_#e8e8e8] border border-slate-200/80 relative my-auto">
 
           {/* Alert Banner */}
           {alert && (

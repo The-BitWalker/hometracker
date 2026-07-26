@@ -424,12 +424,13 @@ export default function DashboardPage() {
       </header>
 
       {/* Main */}
-      <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 my-auto flex-1 flex flex-col justify-center items-center z-10 min-h-0 overflow-hidden py-1 sm:py-2">
-        <div className="w-full h-full max-h-full grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch min-h-0 overflow-hidden">
-
-          {/* LEFT PANEL */}
-          <div className="lg:col-span-5 flex flex-col min-h-0 h-full overflow-hidden">
-            <div className="glass-panel rounded-2xl p-4 sm:p-5 shadow-[0_10px_30px_-5px_rgba(0,0,0,0.05),0_0_0_1px_#e8e8e8] flex-1 flex flex-col min-h-0 card-scroll custom-scroll space-y-4">
+      <main className="w-full max-w-7xl mx-auto px-2 sm:px-6 my-auto flex-1 flex flex-col justify-center items-center z-10 min-h-0 overflow-hidden py-1 sm:py-2">
+        <div className="w-full h-full max-h-full overflow-y-auto lg:overflow-hidden pb-4 lg:pb-0 custom-scroll">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 lg:gap-4 items-stretch lg:h-full lg:min-h-0">
+            
+            {/* LEFT PANEL */}
+            <div className="order-last lg:order-first lg:col-span-5 flex flex-col min-h-0 lg:h-full overflow-visible lg:overflow-hidden">
+              <div className="glass-panel rounded-2xl p-3 sm:p-5 shadow-[0_10px_30px_-5px_rgba(0,0,0,0.05),0_0_0_1px_#e8e8e8] flex-1 flex flex-col min-h-0 card-scroll custom-scroll space-y-3 sm:space-y-4">
 
               {/* Welcome */}
               <div className="flex items-center justify-between border-b border-slate-100 pb-3 shrink-0">
@@ -583,8 +584,8 @@ export default function DashboardPage() {
           </div>
 
           {/* RIGHT MAP */}
-          <div className="lg:col-span-7 flex flex-col gap-3 min-h-[350px] lg:min-h-0 h-full relative">
-            <div className="glass-panel rounded-2xl p-2 shadow-[0_10px_30px_-5px_rgba(0,0,0,0.05),0_0_0_1px_#e8e8e8] flex-1 flex flex-col min-h-0 relative overflow-hidden">
+          <div className="order-first lg:order-last lg:col-span-7 flex flex-col gap-3 h-[45vh] min-h-[300px] lg:min-h-0 lg:h-full relative shrink-0">
+            <div className="glass-panel rounded-2xl p-1.5 sm:p-2 shadow-[0_10px_30px_-5px_rgba(0,0,0,0.05),0_0_0_1px_#e8e8e8] flex-1 flex flex-col min-h-0 relative overflow-hidden">
               <div className="absolute top-4 right-4 z-[400] flex items-center gap-2">
                 <button onClick={centerMapOnHome} className="px-3 py-1.5 rounded-xl bg-white/90 backdrop-blur-sm border border-slate-200 text-slate-800 text-xs font-extrabold shadow-sm hover:bg-white transition flex items-center gap-1.5">
                   <i className="fa-solid fa-house text-[#5621bf]" /> Center Home
@@ -595,6 +596,7 @@ export default function DashboardPage() {
                 <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-[#5621bf]" /> Home</span>
                 <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-blue-500" /> Family Members</span>
               </div>
+            </div>
             </div>
           </div>
         </div>

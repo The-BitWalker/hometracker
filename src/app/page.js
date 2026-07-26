@@ -34,7 +34,7 @@ export default function HomePage() {
   }, []);
 
   return (
-    <div className="fixed inset-0 flex flex-col justify-between overflow-hidden">
+    <div className="fixed inset-0 flex flex-col justify-between overflow-y-auto custom-scroll">
       {/* Top Glow */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[350px] bg-gradient-to-b from-[#e2f0ff]/60 via-purple-100/30 to-transparent blur-3xl -z-10 pointer-events-none" />
 
@@ -58,8 +58,8 @@ export default function HomePage() {
       </header>
 
       {/* Main Hero */}
-      <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-1 sm:py-4 my-auto flex-1 flex flex-col justify-center overflow-hidden">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-12 items-center my-auto max-h-full">
+      <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6 my-auto flex-1 flex flex-col justify-center min-h-0">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-12 items-center my-auto">
           {/* Left Column */}
           <div className="lg:col-span-7 flex flex-col items-center lg:items-start text-center lg:text-left z-10 w-full">
             <h1 className="text-3xl sm:text-5xl md:text-6xl lg:text-6xl xl:text-7xl font-black text-slate-900 tracking-tight leading-[1.1] mb-3 sm:mb-5 lg:mb-6">
