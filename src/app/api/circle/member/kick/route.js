@@ -19,7 +19,7 @@ export async function POST(request) {
 
     // Verify the target user belongs to the parent's family code
     const target = await db.execute({
-      sql: 'SELECT id, role FROM users WHERE id = ? AND family_code = ?',
+      sql: 'SELECT id, name, role FROM users WHERE id = ? AND family_code = ?',
       args: [user_id, user.family_code]
     });
 
@@ -31,10 +31,33 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Cannot kick another parent' }, { status: 403 });
     }
 
-    // Delete target user data
-    await db.execute({ sql: 'DELETE FROM session_tokens WHERE user_id = ?', args: [user_id] });
+    // Instead of deleting the user, we orphan them by clearing the family_code
+    await db.execute({ sql: "UPDATE users SET family_code = '' WHERE id = ?", args: [user_id] });
     await db.execute({ sql: 'DELETE FROM member_status WHERE user_id = ?', args: [user_id] });
-    await db.execute({ sql: 'DELETE FROM users WHERE id = ?', args: [user_id] });
+    
+    // Add a notification for the kicked user
+    const notificationId = crypto.randomUUID();
+    const message = `You have been removed from the family circle by a parent.`;
+    const now = new Date().toISOString();
+    await db.execute({
+      sql: 'INSERT INTO notifications (id, user_id, message, is_read, created_at) VALUES (?, ?, ?, ?, ?)',
+      args: [notificationId, user_id, message, 0, now]
+    });
+
+    // Add a notification for everyone else still in the circle
+    const remainingMembers = await db.execute({
+      sql: "SELECT id FROM users WHERE family_code = ?",
+      args: [user.family_code]
+    });
+    
+    const kickedName = target.rows[0].name;
+    for (const member of remainingMembers.rows) {
+      const nid = crypto.randomUUID();
+      await db.execute({
+        sql: 'INSERT INTO notifications (id, user_id, message, is_read, created_at) VALUES (?, ?, ?, ?, ?)',
+        args: [nid, member.id, `${kickedName} has been removed from the family circle.`, 0, now]
+      });
+    }
 
     return NextResponse.json({ success: true });
   } catch (e) {

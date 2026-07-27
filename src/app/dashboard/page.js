@@ -26,6 +26,9 @@ function calculateDistanceKm(lat1, lon1, lat2, lon2) {
 // Custom Modal Component
 // ============================================================
 function CustomModal({ modal, onClose }) {
+  const [inputValue, setInputValue] = useState('');
+  useEffect(() => { setInputValue(''); }, [modal]);
+
   if (!modal) return null;
   const iconBgClass = modal.type === 'error' ? 'bg-rose-100 text-rose-600' : modal.type === 'warning' ? 'bg-amber-100 text-amber-600' : 'bg-emerald-100 text-emerald-600';
   const iconClass = modal.type === 'error' ? 'fa-circle-exclamation' : modal.type === 'warning' ? 'fa-triangle-exclamation' : 'fa-circle-check';
@@ -38,13 +41,24 @@ function CustomModal({ modal, onClose }) {
         <div>
           <h3 className="text-base font-black text-slate-900 tracking-tight">{modal.title}</h3>
           <p className="text-xs font-semibold text-slate-600 mt-1 leading-relaxed">{modal.message}</p>
+          {modal.input && (
+            <div className="mt-3">
+              <input 
+                type={modal.input.type || 'text'} 
+                placeholder={modal.input.placeholder} 
+                value={inputValue} 
+                onChange={(e) => setInputValue(e.target.value)} 
+                className="w-full py-2 px-3 text-xs font-bold rounded-lg border border-slate-300 focus:border-[#5621bf] outline-none" 
+              />
+            </div>
+          )}
         </div>
         {modal.onConfirm ? (
           <div className="flex gap-2 mt-2">
             <button onClick={onClose} className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs rounded-xl transition active:scale-95 cursor-pointer">
               Cancel
             </button>
-            <button onClick={() => { modal.onConfirm(); onClose(); }} className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-xl shadow-md transition active:scale-95 cursor-pointer">
+            <button onClick={() => { modal.onConfirm(inputValue); onClose(); }} className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-xl shadow-md transition active:scale-95 cursor-pointer">
               {modal.confirmText || 'Confirm'}
             </button>
           </div>
@@ -96,6 +110,12 @@ export default function DashboardPage() {
   // Form state
   const [homeAddress, setHomeAddress] = useState('');
   const [targetTime, setTargetTime] = useState('');
+  
+  const [notifications, setNotifications] = useState([]);
+  const [showNotificationsMenu, setShowNotificationsMenu] = useState(false);
+  const unreadNotifications = notifications.filter(n => n.is_read === 0);
+  
+  const [joinCode, setJoinCode] = useState('');
 
   // Map & Profile refs
   const mapRef = useRef(null);
@@ -103,17 +123,28 @@ export default function DashboardPage() {
   const markersRef = useRef({});
   const routeLinesRef = useRef([]);
   const profileMenuRef = useRef(null);
+  const profileDropdownRef = useRef(null);
+  const notificationMenuRef = useRef(null);
+  const notificationDropdownRef = useRef(null);
   const settingsContentRef = useRef(null);
+  const toastRef = useRef(null);
+
+  // Hover Animation Helpers
+  const hoverScaleIn = (e) => gsap.to(e.currentTarget, { scale: 1.03, duration: 0.2, ease: 'power1.out' });
+  const hoverScaleOut = (e) => gsap.to(e.currentTarget, { scale: 1, duration: 0.2, ease: 'power1.out' });
 
   // GPS
   const watchIdRef = useRef(null);
   const liveGPSRef = useRef({ lat: null, lng: null });
 
-  // Profile Menu click outside
+  // Menus click outside
   useEffect(() => {
     function handleClickOutside(event) {
       if (profileMenuRef.current && !profileMenuRef.current.contains(event.target)) {
         setShowProfileMenu(false);
+      }
+      if (notificationMenuRef.current && !notificationMenuRef.current.contains(event.target)) {
+        setShowNotificationsMenu(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
@@ -131,6 +162,36 @@ export default function DashboardPage() {
     }
   }, [showSettings]);
 
+  // GSAP Animations for Dropdowns
+  useEffect(() => {
+    if (profileDropdownRef.current) {
+      if (showProfileMenu) {
+        gsap.to(profileDropdownRef.current, { autoAlpha: 1, scale: 1, y: 0, duration: 0.2, ease: "power2.out", display: "block" });
+      } else {
+        gsap.to(profileDropdownRef.current, { autoAlpha: 0, scale: 0.95, y: -10, duration: 0.2, ease: "power2.in", display: "none" });
+      }
+    }
+  }, [showProfileMenu]);
+
+  useEffect(() => {
+    if (notificationDropdownRef.current) {
+      if (showNotificationsMenu) {
+        gsap.to(notificationDropdownRef.current, { autoAlpha: 1, scale: 1, y: 0, duration: 0.2, ease: "power2.out", display: "flex" });
+      } else {
+        gsap.to(notificationDropdownRef.current, { autoAlpha: 0, scale: 0.95, y: -10, duration: 0.2, ease: "power2.in", display: "none" });
+      }
+    }
+  }, [showNotificationsMenu]);
+
+  useEffect(() => {
+    if (toastRef.current) {
+      if (unreadNotifications.length > 0) {
+        gsap.to(toastRef.current, { y: 0, autoAlpha: 1, duration: 0.5, ease: "bounce.out", display: 'flex' });
+      } else {
+        gsap.to(toastRef.current, { y: -50, autoAlpha: 0, duration: 0.3, ease: "power2.in", display: 'none' });
+      }
+    }
+  }, [unreadNotifications.length]);
   // Force open settings if home is not set
   useEffect(() => {
     if (user?.role === 'parent' && home && !home.home_address) {
@@ -186,13 +247,15 @@ export default function DashboardPage() {
     if (!user) return;
 
     try {
-      const [homeRes, membersRes] = await Promise.all([
+      const [homeRes, membersRes, notifRes] = await Promise.all([
         fetch('/api/circle/home').then((r) => r.json()),
         fetch('/api/circle/members').then((r) => r.json()),
+        fetch('/api/notifications').then((r) => r.json()),
       ]);
 
       if (homeRes.home) setHome(homeRes.home);
       if (membersRes.members) setMembers(membersRes.members);
+      if (notifRes.notifications) setNotifications(notifRes.notifications);
     } catch (e) {
       console.error('Refresh error:', e);
     }
@@ -398,13 +461,17 @@ export default function DashboardPage() {
     setModal({
       type: 'error',
       title: 'Leave Family Circle?',
-      message: 'Are you sure you want to leave? Your account will be deleted and you will need a new family code to join again.',
-      confirmText: 'Leave & Delete',
+      message: 'Are you sure you want to leave? Your account will NOT be deleted, but you will need a new family code to join again.',
+      confirmText: 'Leave Circle',
       onConfirm: async () => {
         try {
           const res = await fetch('/api/circle/member/leave', { method: 'POST' });
-          if (res.ok) window.location.href = '/auth';
-          else setModal({ type: 'error', title: 'Error', message: 'Failed to leave circle.' });
+          if (res.ok) {
+            setUser(prev => ({...prev, family_code: ''}));
+            setHome(null);
+            setMembers([]);
+            setModal({ type: 'success', title: 'Left Circle', message: 'You have left the family circle.' });
+          } else setModal({ type: 'error', title: 'Error', message: 'Failed to leave circle.' });
         } catch(e) {
           setModal({ type: 'error', title: 'Error', message: 'Failed to leave circle.' });
         }
@@ -416,7 +483,7 @@ export default function DashboardPage() {
     setModal({
       type: 'warning',
       title: 'Kick Member?',
-      message: `Are you sure you want to remove ${member.name} from the family circle? Their account will be deleted.`,
+      message: `Are you sure you want to remove ${member.name} from the family circle? Their account will NOT be deleted, but they will be removed from this circle.`,
       confirmText: 'Kick Member',
       onConfirm: async () => {
         try {
@@ -484,6 +551,233 @@ export default function DashboardPage() {
       setModal({ type: 'error', title: 'Error', message: e.message });
     }
   };
+
+  const handleJoinCircle = async () => {
+    if (!joinCode || joinCode.trim().length < 4) {
+      setModal({ type: 'warning', title: 'Invalid Code', message: 'Please enter a valid family code.' });
+      return;
+    }
+    try {
+      const res = await fetch('/api/circle/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ family_code: joinCode }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setUser(prev => ({ ...prev, family_code: data.family_code, role: data.role }));
+        setModal({ type: 'success', title: 'Joined Family', message: 'You have successfully joined the family circle!' });
+        await refreshData();
+      } else {
+        setModal({ type: 'error', title: 'Error', message: data.error || 'Failed to join family.' });
+      }
+    } catch (e) {
+      setModal({ type: 'error', title: 'Error', message: e.message });
+    }
+  };
+
+  const handleCreateCircle = async () => {
+    try {
+      const res = await fetch('/api/circle/create', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        setUser(prev => ({ ...prev, family_code: data.family_code, role: data.role }));
+        setModal({ type: 'success', title: 'Family Created', message: `Your new family circle code is ${data.family_code}` });
+        await refreshData();
+      } else {
+        setModal({ type: 'error', title: 'Error', message: data.error || 'Failed to create family.' });
+      }
+    } catch (e) {
+      setModal({ type: 'error', title: 'Error', message: e.message });
+    }
+  };
+
+  const handleDismissNotifications = async () => {
+    if (notifications.length === 0) return;
+    const ids = notifications.map(n => n.id);
+    setNotifications([]);
+    try {
+      await fetch('/api/notifications/mark-read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notification_ids: ids }),
+      });
+    } catch(e) { console.error('Failed to mark read', e); }
+  };
+
+  const confirmDeleteAccount = async (password) => {
+    try {
+      const res = await fetch('/api/auth/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        window.location.href = '/auth';
+      } else {
+        setModal({ type: 'error', title: 'Error', message: data.error || 'Failed to delete account.' });
+      }
+    } catch(e) {
+      setModal({ type: 'error', title: 'Error', message: e.message });
+    }
+  };
+
+  const handleDeleteAccount = () => {
+    setModal({
+      type: 'warning',
+      title: 'Delete Account',
+      message: 'This action is permanent and cannot be undone. Please enter your password to confirm.',
+      confirmText: 'Delete Forever',
+      input: {
+        type: 'password',
+        placeholder: 'Password',
+        value: '',
+        onChange: () => {}
+      },
+      onConfirm: (password) => confirmDeleteAccount(password)
+    });
+  };
+
+  const renderNotificationDropdown = () => (
+    <div className="relative" ref={notificationMenuRef}>
+      <button
+        onClick={() => setShowNotificationsMenu(!showNotificationsMenu)}
+        onMouseEnter={hoverScaleIn}
+        onMouseLeave={hoverScaleOut}
+        className="h-10 w-10 flex items-center justify-center rounded-2xl bg-white/90 backdrop-blur-md border border-slate-200 shadow-sm hover:shadow-md hover:border-[#5621bf]/30 transition-all duration-200 active:scale-98 cursor-pointer relative"
+        aria-expanded={showNotificationsMenu}
+        aria-haspopup="true"
+      >
+        <i className="fa-solid fa-bell text-slate-500 text-sm group-hover:text-[#5621bf] transition-colors" />
+        {unreadNotifications.length > 0 && (
+          <span className="absolute top-2 right-2.5 w-2.5 h-2.5 rounded-full bg-rose-500 shadow-[0_0_0_2px_rgba(255,255,255,1)]" />
+        )}
+      </button>
+
+      {/* Dropdown Menu */}
+      <div ref={notificationDropdownRef} style={{ display: 'none', opacity: 0, visibility: 'hidden' }} className="absolute right-0 mt-2 w-72 sm:w-80 bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-200/90 z-50 origin-top-right overflow-hidden flex-col max-h-[400px]">
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+          <h3 className="text-sm font-black text-slate-900">Notifications</h3>
+          {unreadNotifications.length > 0 && (
+            <button onClick={handleDismissNotifications} className="text-[10px] font-bold text-[#5621bf] hover:text-[#431799] transition-colors cursor-pointer bg-[#5621bf]/10 px-2 py-1 rounded-md">
+              Mark all read
+            </button>
+          )}
+        </div>
+        <div className="overflow-y-auto flex-1 p-2 space-y-1">
+          {notifications.length === 0 ? (
+            <div className="py-8 text-center text-slate-400 text-xs font-semibold">
+              No notifications yet
+            </div>
+          ) : (
+            notifications.map((n) => (
+              <div key={n.id} className={`p-3 rounded-xl flex items-start gap-3 transition-colors ${n.is_read ? 'bg-transparent' : 'bg-rose-50/50'}`}>
+                <div className={`mt-1 w-2 h-2 rounded-full shrink-0 ${n.is_read ? 'bg-slate-300' : 'bg-rose-500'}`} />
+                <div className="min-w-0 flex-1">
+                  <p className={`text-xs ${n.is_read ? 'font-medium text-slate-600' : 'font-bold text-slate-900'}`}>{n.message}</p>
+                  <p className="text-[9px] font-bold text-slate-400 mt-1 uppercase tracking-wider">{new Date(n.created_at).toLocaleDateString()} {new Date(n.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderProfileDropdown = () => (
+    <div className="relative" ref={profileMenuRef}>
+      <button
+        onClick={() => setShowProfileMenu(!showProfileMenu)}
+        onMouseEnter={hoverScaleIn}
+        onMouseLeave={hoverScaleOut}
+        className="h-10 flex items-center gap-2 px-2 sm:px-3 rounded-2xl bg-white/90 backdrop-blur-md border border-slate-200 shadow-sm hover:shadow-md hover:border-[#5621bf]/30 transition-all duration-200 active:scale-98 cursor-pointer"
+        aria-expanded={showProfileMenu}
+        aria-haspopup="true"
+      >
+        <div className="w-7 h-7 rounded-full avatar-gradient text-white flex items-center justify-center text-[10px] font-black shadow-sm shrink-0">
+          {(user?.name || 'U').substring(0, 2).toUpperCase()}
+        </div>
+        <span className="hidden sm:block text-xs font-extrabold text-slate-900 truncate max-w-[100px]">
+          {user?.name}
+        </span>
+        <i className={`fa-solid fa-chevron-down text-[9px] text-slate-400 transition-transform duration-200 ${showProfileMenu ? 'rotate-180 text-[#5621bf]' : ''}`} />
+      </button>
+
+      {/* Dropdown Menu */}
+      <div ref={profileDropdownRef} style={{ display: 'none', opacity: 0, visibility: 'hidden' }} className="absolute right-0 mt-2 w-64 sm:w-72 bg-white/95 backdrop-blur-xl rounded-2xl p-3 sm:p-4 shadow-2xl border border-slate-200/90 z-50">
+          {/* Profile Header */}
+          <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
+            <div className="w-10 h-10 rounded-full avatar-gradient text-white flex items-center justify-center text-sm font-black shadow-sm shrink-0">
+              {(user?.name || 'U').substring(0, 2).toUpperCase()}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-black text-slate-900 truncate">{user?.name}</p>
+              <p className="text-xs font-medium text-slate-500 truncate">{user?.email}</p>
+              <span className={`inline-block mt-1 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider ${isParent ? 'bg-[#5621bf]/10 text-[#5621bf]' : 'bg-amber-100 text-amber-800'}`}>
+                {isParent ? 'Parent Account' : 'Child / Teen Account'}
+              </span>
+            </div>
+          </div>
+
+          {/* Family Code row */}
+          <div className="py-2.5 px-3 my-2.5 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between">
+            <div>
+              <p className="text-[9px] font-extrabold uppercase text-slate-400">Family Code</p>
+              <p className="text-xs font-black text-[#5621bf] tracking-widest">{user?.family_code || '--'}</p>
+            </div>
+            {user?.family_code && (
+              <button onClick={handleCopyCode} className="text-xs font-bold text-slate-500 hover:text-[#5621bf] p-1 transition flex items-center gap-1 cursor-pointer">
+                <i className={copyIcon} />
+              </button>
+            )}
+          </div>
+
+          {/* Menu Actions */}
+          <div className="pt-1 space-y-1">
+            {!isParent && user?.family_code && (
+              <button
+                onClick={handleLeaveCircle}
+                onMouseEnter={hoverScaleIn}
+                onMouseLeave={hoverScaleOut}
+                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-600 font-extrabold text-xs transition-colors duration-150 group cursor-pointer mb-1"
+              >
+                <span className="flex items-center gap-2">
+                  <i className="fa-solid fa-person-walking-arrow-right text-sm group-hover:-translate-x-0.5 transition-transform" />
+                  Leave Family Circle
+                </span>
+                <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
+              </button>
+            )}
+            <button
+              onClick={handleSignOut}
+              onMouseEnter={hoverScaleIn}
+              onMouseLeave={hoverScaleOut}
+              className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-600 font-extrabold text-xs transition-colors duration-150 group cursor-pointer mb-1"
+            >
+              <span className="flex items-center gap-2">
+                <i className="fa-solid fa-right-from-bracket text-sm group-hover:-translate-x-0.5 transition-transform" />
+                Sign Out
+              </span>
+              <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
+            </button>
+            <button
+              onClick={handleDeleteAccount}
+              onMouseEnter={hoverScaleIn}
+              onMouseLeave={hoverScaleOut}
+              className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 font-extrabold text-xs transition-colors duration-150 group cursor-pointer"
+            >
+              <span className="flex items-center gap-2">
+                <i className="fa-solid fa-trash-can text-sm group-hover:-translate-y-0.5 transition-transform" />
+                Delete Account
+              </span>
+              <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
+            </button>
+          </div>
+        </div>
+    </div>
+  );
 
   const handleDismissTip = () => {
     if (user?.id) localStorage.setItem('ht_tip_dismissed_' + user.id, 'true');
@@ -588,12 +882,86 @@ export default function DashboardPage() {
     return { label: `${dist.toFixed(1)} km away`, color: 'text-slate-500', badge: null };
   };
 
+  const renderToast = () => (
+    <div ref={toastRef} style={{ display: 'none', opacity: 0, visibility: 'hidden' }} className="fixed top-6 left-1/2 -translate-x-1/2 w-[90%] max-w-sm bg-white border border-rose-100 px-4 py-3 rounded-2xl shadow-[0_10px_40px_-10px_rgba(244,63,94,0.3)] z-[100] items-center justify-between">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 rounded-full bg-rose-50 flex items-center justify-center shrink-0">
+          <i className="fa-solid fa-bell text-rose-500 text-lg"></i>
+        </div>
+        <div className="flex flex-col flex-1 min-w-0">
+          <span className="font-black text-slate-900 text-sm">New Notification</span>
+          <span className="text-xs text-slate-500 font-medium whitespace-normal break-words leading-relaxed">{unreadNotifications[0]?.message}</span>
+        </div>
+      </div>
+      <button onClick={handleDismissNotifications} className="w-8 h-8 rounded-full hover:bg-slate-50 flex items-center justify-center transition-colors shrink-0">
+        <i className="fa-solid fa-xmark text-slate-400"></i>
+      </button>
+    </div>
+  );
+
+  if (user && !user.family_code) {
+    return (
+      <div className="min-h-screen min-h-dvh flex flex-col relative overflow-hidden bg-slate-50 items-center justify-center p-6">
+        <CustomModal modal={modal} onClose={() => setModal(null)} />
+        <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[800px] h-[350px] bg-gradient-to-b from-[#e2f0ff]/60 via-purple-100/30 to-transparent blur-3xl -z-10 pointer-events-none" />
+        <WaveBackground />
+        
+        {renderToast()}
+
+        {/* Header */}
+        <header className="absolute top-0 w-full px-3 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between z-20">
+          <Link href="/" className="flex items-center gap-2 group">
+            <Image src="/logo.png" alt="HOMETRACKER Logo" width={36} height={36} className="w-8 h-8 sm:w-9 sm:h-9 object-contain group-hover:scale-105 transition-transform duration-300" />
+            <span className="font-extrabold text-lg tracking-tight text-slate-900">
+              HOME<span className="text-[#5621bf]">TRACKER</span>
+            </span>
+          </Link>
+          <div className="flex items-center gap-2">
+            {renderNotificationDropdown()}
+            {renderProfileDropdown()}
+          </div>
+        </header>
+
+        <div className="w-full max-w-md bg-white/80 backdrop-blur-xl border border-white rounded-3xl p-6 sm:p-8 shadow-2xl relative z-10 text-center mt-12">
+          <div className="w-16 h-16 bg-rose-100 text-rose-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <i className="fa-solid fa-house-crack text-3xl"></i>
+          </div>
+          <h2 className="text-xl font-black text-slate-900 mb-2">You don't belong to a Family Circle</h2>
+          <p className="text-xs text-slate-500 mb-8 font-medium leading-relaxed">
+            It looks like you've been removed or left your family circle. To continue using HomeTracker, you must either join an existing family or create a new one.
+          </p>
+          
+          <div className="space-y-4">
+            {!isParent && (
+              <>
+                <div className="relative">
+                  <input type="text" value={joinCode} onChange={e => setJoinCode(e.target.value)} placeholder="Enter Family Code (e.g. HT-1234)" className="w-full py-3 px-4 text-sm font-bold text-center rounded-xl border border-slate-300 focus:border-[#5621bf] outline-none" />
+                </div>
+                <button onClick={handleJoinCircle} onMouseEnter={hoverScaleIn} onMouseLeave={hoverScaleOut} className="w-full py-3 bg-[#5621bf] hover:bg-[#431799] text-white font-extrabold text-sm rounded-xl shadow-lg transition active:scale-95 flex items-center justify-center gap-2">
+                  <i className="fa-solid fa-right-to-bracket"></i> Join Family
+                </button>
+              </>
+            )}
+
+            {isParent && (
+              <button onClick={handleCreateCircle} onMouseEnter={hoverScaleIn} onMouseLeave={hoverScaleOut} className="w-full py-3 bg-[#5621bf] hover:bg-[#431799] text-white font-extrabold text-sm rounded-xl shadow-lg transition active:scale-95 flex items-center justify-center gap-2">
+                <i className="fa-solid fa-plus"></i> Create New Family
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen min-h-dvh flex flex-col relative overflow-x-hidden">
       <CustomModal modal={modal} onClose={() => setModal(null)} />
 
       <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[800px] h-[350px] bg-gradient-to-b from-[#e2f0ff]/60 via-purple-100/30 to-transparent blur-3xl -z-10 pointer-events-none" />
       <WaveBackground />
+
+      {renderToast()}
 
       {/* ===== Header ===== */}
       <header className="w-full px-3 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between z-20 shrink-0">
@@ -609,85 +977,15 @@ export default function DashboardPage() {
         <div className="flex items-center gap-2">
           {/* Center Home button */}
           {homeIsSet && (
-            <button onClick={centerMapOnHome} className="h-10 px-3 rounded-xl bg-white/80 backdrop-blur-sm border border-slate-200 text-slate-700 text-xs font-bold shadow-sm hover:bg-white transition flex items-center gap-1.5 cursor-pointer">
+            <button onClick={centerMapOnHome} onMouseEnter={hoverScaleIn} onMouseLeave={hoverScaleOut} className="h-10 px-3 rounded-xl bg-white/80 backdrop-blur-sm border border-slate-200 text-slate-700 text-xs font-bold shadow-sm hover:bg-white transition flex items-center gap-1.5 cursor-pointer">
               <i className="fa-solid fa-house text-[#5621bf] text-[11px]" />
               <span className="hidden sm:inline">Center Home</span>
             </button>
           )}
 
+          {renderNotificationDropdown()}
           {/* Profile Dropdown */}
-          <div className="relative" ref={profileMenuRef}>
-            <button
-              onClick={() => setShowProfileMenu(!showProfileMenu)}
-              className="h-10 flex items-center gap-2 px-2 sm:px-3 rounded-2xl bg-white/90 backdrop-blur-md border border-slate-200 shadow-sm hover:shadow-md hover:border-[#5621bf]/30 transition-all duration-200 active:scale-98 cursor-pointer"
-              aria-expanded={showProfileMenu}
-              aria-haspopup="true"
-            >
-              <div className="w-7 h-7 rounded-full avatar-gradient text-white flex items-center justify-center text-[10px] font-black shadow-sm shrink-0">
-                {(user?.name || 'U').substring(0, 2).toUpperCase()}
-              </div>
-              <span className="hidden sm:block text-xs font-extrabold text-slate-900 truncate max-w-[100px]">
-                {user?.name}
-              </span>
-              <i className={`fa-solid fa-chevron-down text-[9px] text-slate-400 transition-transform duration-200 ${showProfileMenu ? 'rotate-180 text-[#5621bf]' : ''}`} />
-            </button>
-
-            {/* Dropdown Menu */}
-            {showProfileMenu && (
-              <div className="absolute right-0 mt-2 w-64 sm:w-72 bg-white/95 backdrop-blur-xl rounded-2xl p-3 sm:p-4 shadow-2xl border border-slate-200/90 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
-                {/* Profile Header */}
-                <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
-                  <div className="w-10 h-10 rounded-full avatar-gradient text-white flex items-center justify-center text-sm font-black shadow-sm shrink-0">
-                    {(user?.name || 'U').substring(0, 2).toUpperCase()}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-black text-slate-900 truncate">{user?.name}</p>
-                    <p className="text-xs font-medium text-slate-500 truncate">{user?.email}</p>
-                    <span className={`inline-block mt-1 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider ${isParent ? 'bg-[#5621bf]/10 text-[#5621bf]' : 'bg-amber-100 text-amber-800'}`}>
-                      {isParent ? 'Parent Account' : 'Child / Teen Account'}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Family Code row */}
-                <div className="py-2.5 px-3 my-2.5 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between">
-                  <div>
-                    <p className="text-[9px] font-extrabold uppercase text-slate-400">Family Code</p>
-                    <p className="text-xs font-black text-[#5621bf] tracking-widest">{user?.family_code || '--'}</p>
-                  </div>
-                  <button onClick={handleCopyCode} className="text-xs font-bold text-slate-500 hover:text-[#5621bf] p-1 transition flex items-center gap-1 cursor-pointer">
-                    <i className={copyIcon} />
-                  </button>
-                </div>
-
-                {/* Menu Actions */}
-                <div className="pt-1 space-y-1">
-                  {!isParent && (
-                    <button
-                      onClick={handleLeaveCircle}
-                      className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-600 font-extrabold text-xs transition-colors duration-150 group cursor-pointer mb-1"
-                    >
-                      <span className="flex items-center gap-2">
-                        <i className="fa-solid fa-person-walking-arrow-right text-sm group-hover:-translate-x-0.5 transition-transform" />
-                        Leave Family Circle
-                      </span>
-                      <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
-                    </button>
-                  )}
-                  <button
-                    onClick={handleSignOut}
-                    className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 font-extrabold text-xs transition-colors duration-150 group cursor-pointer"
-                  >
-                    <span className="flex items-center gap-2">
-                      <i className="fa-solid fa-right-from-bracket text-sm group-hover:-translate-x-0.5 transition-transform" />
-                      Sign Out
-                    </span>
-                    <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
+          {renderProfileDropdown()}
         </div>
       </header>
 

@@ -21,11 +21,18 @@ export async function POST(request) {
 
     const childIds = childrenRes.rows.map(r => r.id);
 
-    // 2. Delete all children records
+    // 2. Orphan all children and notify them
+    const now = new Date().toISOString();
     for (const id of childIds) {
-      await db.execute({ sql: 'DELETE FROM session_tokens WHERE user_id = ?', args: [id] });
+      await db.execute({ sql: "UPDATE users SET family_code = '' WHERE id = ?", args: [id] });
       await db.execute({ sql: 'DELETE FROM member_status WHERE user_id = ?', args: [id] });
-      await db.execute({ sql: 'DELETE FROM users WHERE id = ?', args: [id] });
+      
+      const notificationId = crypto.randomUUID();
+      const message = `The family circle has been deleted by a parent.`;
+      await db.execute({
+        sql: 'INSERT INTO notifications (id, user_id, message, is_read, created_at) VALUES (?, ?, ?, ?, ?)',
+        args: [notificationId, id, message, 0, now]
+      });
     }
 
     // 3. Delete family_circles settings
