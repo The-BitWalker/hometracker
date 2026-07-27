@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import Image from 'next/image';
-import { useEffect } from 'react';
+import { useState, useEffect } from 'react';
 
 function WaveBackground({ animated = false }) {
   const animClass = animated ? 'wave-animated' : '';
@@ -21,6 +21,8 @@ function WaveBackground({ animated = false }) {
 }
 
 export default function HomePage() {
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
   useEffect(() => {
     // Check if user is already logged in
     fetch('/api/auth/session')
@@ -34,7 +36,7 @@ export default function HomePage() {
   }, []);
 
   return (
-    <div className="fixed inset-0 flex flex-col justify-between overflow-y-auto custom-scroll">
+    <div className="min-h-screen min-h-dvh flex flex-col justify-between relative overflow-x-hidden">
       {/* Top Glow */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[350px] bg-gradient-to-b from-[#e2f0ff]/60 via-purple-100/30 to-transparent blur-3xl -z-10 pointer-events-none" />
 
@@ -42,20 +44,92 @@ export default function HomePage() {
       <WaveBackground animated={true} />
 
       {/* Header */}
-      <header className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-2 sm:py-4 lg:py-5 flex items-center justify-between z-20 shrink-0">
+      <header className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between z-30 shrink-0">
         <Link href="/" className="flex items-center gap-2 sm:gap-2.5 group">
-          <Image src="/logo.png" alt="HOMETRACKER Logo" width={40} height={40} className="w-7 h-7 sm:w-10 sm:h-10 object-contain group-hover:scale-105 transition-transform duration-300" />
+          <Image src="/logo.png" alt="HOMETRACKER Logo" width={44} height={44} className="w-8 h-8 sm:w-11 sm:h-11 object-contain group-hover:scale-105 transition-transform duration-300" />
           <span className="font-extrabold text-lg sm:text-2xl tracking-tight text-slate-900">
             HOME<span className="text-[#5621bf]">TRACKER</span>
           </span>
         </Link>
 
+        {/* Desktop Navigation */}
         <nav className="hidden md:flex items-center gap-8 font-semibold text-sm text-slate-600">
-          <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'how-it-works'}))} className="hover:text-[#5621bf] transition-colors">How It Works</button>
-          <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'safety'}))} className="hover:text-[#5621bf] transition-colors">Privacy &amp; Safety</button>
-          <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'tips'}))} className="hover:text-[#5621bf] transition-colors">Tips &amp; Tricks</button>
+          <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'how-it-works'}))} className="hover:text-[#5621bf] transition-colors cursor-pointer">How It Works</button>
+          <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'safety'}))} className="hover:text-[#5621bf] transition-colors cursor-pointer">Privacy &amp; Safety</button>
+          <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'tips'}))} className="hover:text-[#5621bf] transition-colors cursor-pointer">Tips &amp; Tricks</button>
         </nav>
+
+        {/* Hamburger Menu Button */}
+        <button 
+          type="button" 
+          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          className="md:hidden w-10 h-10 flex items-center justify-center rounded-xl bg-white/80 border border-slate-200/80 text-slate-700 hover:text-[#5621bf] hover:border-purple-300 transition-all cursor-pointer shadow-sm active:scale-95 z-40"
+          aria-label="Toggle menu"
+        >
+          <i className={`fa-solid ${mobileMenuOpen ? 'fa-xmark' : 'fa-bars'} text-lg`} />
+        </button>
       </header>
+
+      {/* Mobile Navigation Menu */}
+      {mobileMenuOpen && (
+        <div className="fixed inset-0 z-20 md:hidden flex flex-col bg-white/95 backdrop-blur-xl animate-in fade-in duration-200">
+          <div className="flex-1 flex flex-col items-center justify-center gap-8 px-6 pt-20">
+            <button 
+              type="button" 
+              onClick={() => {
+                setMobileMenuOpen(false);
+                window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'how-it-works'}));
+              }} 
+              className="text-2xl font-bold text-slate-800 hover:text-[#5621bf] active:scale-95 transition-all cursor-pointer"
+            >
+              How It Works
+            </button>
+            <button 
+              type="button" 
+              onClick={() => {
+                setMobileMenuOpen(false);
+                window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'safety'}));
+              }} 
+              className="text-2xl font-bold text-slate-800 hover:text-[#5621bf] active:scale-95 transition-all cursor-pointer"
+            >
+              Privacy &amp; Safety
+            </button>
+            <button 
+              type="button" 
+              onClick={() => {
+                setMobileMenuOpen(false);
+                window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'tips'}));
+              }} 
+              className="text-2xl font-bold text-slate-800 hover:text-[#5621bf] active:scale-95 transition-all cursor-pointer"
+            >
+              Tips &amp; Tricks
+            </button>
+            
+            <hr className="w-12 border-t-2 border-slate-200 my-2" />
+
+            <button 
+              type="button" 
+              onClick={() => {
+                setMobileMenuOpen(false);
+                window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'privacy'}));
+              }} 
+              className="text-base font-semibold text-slate-500 hover:text-[#5621bf] active:scale-95 transition-all cursor-pointer"
+            >
+              Privacy Policy
+            </button>
+            <button 
+              type="button" 
+              onClick={() => {
+                setMobileMenuOpen(false);
+                window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'terms'}));
+              }} 
+              className="text-base font-semibold text-slate-500 hover:text-[#5621bf] active:scale-95 transition-all cursor-pointer"
+            >
+              Terms of Service
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main Hero */}
       <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6 my-auto flex-1 flex flex-col justify-center min-h-0">
@@ -98,8 +172,8 @@ export default function HomePage() {
       <footer className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-2 sm:py-4 flex flex-col sm:flex-row items-center justify-between gap-2 sm:gap-4 text-[10px] sm:text-xs font-semibold text-slate-500 border-t border-[#e8e8e8]/60 z-20 shrink-0">
         <div>© 2026 <span className="font-extrabold text-slate-800">HOMETRACKER Inc.</span> All rights reserved.</div>
         <div className="flex items-center gap-4 sm:gap-6">
-          <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'privacy'}))} className="hover:text-[#5621bf] transition-colors">Privacy Policy</button>
-          <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'terms'}))} className="hover:text-[#5621bf] transition-colors">Terms of Service</button>
+          <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'privacy'}))} className="hover:text-[#5621bf] transition-colors cursor-pointer">Privacy Policy</button>
+          <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'terms'}))} className="hover:text-[#5621bf] transition-colors cursor-pointer">Terms of Service</button>
         </div>
       </footer>
     </div>

@@ -4,13 +4,19 @@
 /* BASE & BODY                                                   */
 /* ============================================================ */
 html, body {
-  height: 100%;
-  height: 100dvh;
+  min-height: 100%;
+  min-height: 100dvh;
   width: 100%;
-  overflow: hidden;
   overscroll-behavior: none;
   touch-action: manipulation;
 }
+
+/* Custom Purple Checkbox */
+.purple-checkbox {
+  accent-color: #5621bf;
+  cursor: pointer;
+}
+
 
 body {
   background-color: #fdfdfd;
@@ -160,4 +166,28 @@ body {
 /* ============================================================ */
 #loading-screen {
   transition: opacity 0.4s ease;
+}
+
+/* ============================================================ */
+/* AUTH TAB TRANSITIONS                                          */
+/* ============================================================ */
+@keyframes authTabFadeIn {
+  0% {
+    opacity: 0;
+    transform: translateY(16px) scale(0.97);
+    filter: blur(2px);
+  }
+  60% {
+    opacity: 0.8;
+    filter: blur(0px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0px);
+  }
+}
+
+.auth-tab-content {
+  animation: authTabFadeIn 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
 }

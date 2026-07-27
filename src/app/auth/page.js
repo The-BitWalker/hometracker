@@ -30,6 +30,7 @@ export default function AuthPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [familyCode, setFamilyCode] = useState('');
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
   // Field errors
@@ -86,6 +87,13 @@ export default function AuthPage() {
     return true;
   };
 
+  const validateTerms = () => {
+    if (tab !== 'signup') return true;
+    if (!acceptedTerms) { setFieldError('terms', 'You must agree to the Terms of Service to create an account.'); return false; }
+    clearFieldError('terms');
+    return true;
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     hideAlert();
@@ -94,8 +102,9 @@ export default function AuthPage() {
     const passOk = validatePassword();
     const nameOk = validateFullname();
     const codeOk = validateFamilyCode();
+    const termsOk = validateTerms();
 
-    if (!emailOk || !passOk || !nameOk || !codeOk) {
+    if (!emailOk || !passOk || !nameOk || !codeOk || !termsOk) {
       showAlert('error', 'Please correct the highlighted errors.');
       return;
     }
@@ -156,14 +165,14 @@ export default function AuthPage() {
   };
 
   return (
-    <div className="fixed inset-0 flex flex-col justify-between overflow-y-auto custom-scroll">
+    <div className="min-h-screen min-h-dvh flex flex-col justify-between relative overflow-x-hidden">
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[350px] bg-gradient-to-b from-[#e2f0ff]/60 via-purple-100/30 to-transparent blur-3xl -z-10 pointer-events-none" />
       <WaveBackground />
 
       {/* Header */}
-      <header className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-2 sm:py-3 lg:py-4 flex items-center justify-between z-20 shrink-0">
+      <header className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between z-20 shrink-0">
         <Link href="/" className="flex items-center gap-2 sm:gap-2.5 group">
-          <Image src="/logo.png" alt="HOMETRACKER Logo" width={40} height={40} className="w-7 h-7 sm:w-10 sm:h-10 object-contain group-hover:scale-105 transition-transform duration-300" />
+          <Image src="/logo.png" alt="HOMETRACKER Logo" width={44} height={44} className="w-8 h-8 sm:w-11 sm:h-11 object-contain group-hover:scale-105 transition-transform duration-300" />
           <span className="font-extrabold text-lg sm:text-2xl tracking-tight text-slate-900">
             HOME<span className="text-[#5621bf]">TRACKER</span>
           </span>
@@ -186,16 +195,6 @@ export default function AuthPage() {
             </div>
           )}
 
-          {/* Title */}
-          <div className="text-center mb-3 sm:mb-5">
-            <h1 className="text-xl sm:text-3xl font-black text-slate-900 tracking-tight">
-              {tab === 'signin' ? 'Welcome Back' : 'Create Your Account'}
-            </h1>
-            <p className="text-slate-500 font-medium text-xs sm:text-sm mt-0.5 sm:mt-1">
-              {tab === 'signin' ? 'Sign in to track your family in real-time' : 'Start your private family location circle'}
-            </p>
-          </div>
-
           {/* Tab Switcher */}
           <div className="flex bg-slate-100 p-1 sm:p-1.5 rounded-xl sm:rounded-2xl mb-3 sm:mb-5">
             <button
@@ -216,6 +215,19 @@ export default function AuthPage() {
             >
               <i className="fa-solid fa-user-plus mr-1 sm:mr-1.5" /> Create Account
             </button>
+          </div>
+
+          {/* Animated Tab Content */}
+          <div key={tab} className="auth-tab-content">
+
+          {/* Title */}
+          <div className="text-center mb-3 sm:mb-5">
+            <h1 className="text-xl sm:text-3xl font-black text-slate-900 tracking-tight">
+              {tab === 'signin' ? 'Welcome Back' : 'Create Your Account'}
+            </h1>
+            <p className="text-slate-500 font-medium text-xs sm:text-sm mt-0.5 sm:mt-1">
+              {tab === 'signin' ? 'Sign in to track your family in real-time' : 'Start your private family location circle'}
+            </p>
           </div>
 
           {/* Form */}
@@ -299,8 +311,21 @@ export default function AuthPage() {
                 <label className="block text-[11px] sm:text-xs font-bold uppercase tracking-wider text-[#5621bf] mb-1">Parent&apos;s Family Code</label>
                 <div className="relative">
                   <i className="fa-solid fa-key absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs sm:text-sm" />
-                  <input type="text" value={familyCode} onChange={(e) => setFamilyCode(e.target.value)} onBlur={validateFamilyCode}
-                    placeholder="e.g. HT-8921" maxLength={8}
+                  <input type="text" value={familyCode}
+                    onChange={(e) => {
+                      let val = e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '');
+                      // Remove any dashes the user typed so we control placement
+                      const raw = val.replace(/-/g, '');
+                      // Auto-insert dash after first 2 characters
+                      if (raw.length > 2) {
+                        val = raw.slice(0, 2) + '-' + raw.slice(2, 6);
+                      } else {
+                        val = raw;
+                      }
+                      setFamilyCode(val);
+                    }}
+                    onBlur={validateFamilyCode}
+                    placeholder="e.g. HT-8921" maxLength={7}
                     className={`w-full pl-10 sm:pl-11 pr-4 py-2 rounded-xl border ${errors.familyCode ? 'border-rose-500' : 'border-[#e8e8e8] focus:border-[#5621bf]'} focus:ring-2 focus:ring-[#5621bf]/20 outline-none uppercase tracking-widest text-xs sm:text-sm font-extrabold text-slate-800 bg-white`} />
                 </div>
                 {errors.familyCode && <p className="text-[11px] font-semibold text-rose-500 mt-1">{errors.familyCode}</p>}
@@ -310,19 +335,28 @@ export default function AuthPage() {
 
             {/* Parent Notice (Parent Sign Up) */}
             {tab === 'signup' && role === 'parent' && (
-              <div className="bg-purple-50/70 p-2.5 rounded-xl border border-purple-100 flex items-center gap-2">
-                <i className="fa-solid fa-circle-check text-[#5621bf] text-sm" />
-                <p className="text-[11px] sm:text-xs font-semibold text-slate-700">A unique Family Invite Code will automatically be generated for your kids.</p>
-              </div>
+              <p className="text-[11px] sm:text-xs font-medium text-slate-500 italic">A unique Family Invite Code will automatically be generated for your kids.</p>
             )}
 
             {/* Terms (Sign Up) */}
             {tab === 'signup' && (
-              <div className="flex items-center gap-2 pt-0.5">
-                <input type="checkbox" id="terms" required className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#5621bf] rounded border-[#e8e8e8] focus:ring-[#5621bf]" />
-                <label htmlFor="terms" className="text-[11px] sm:text-xs font-semibold text-slate-600">
-                  I agree to the <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'terms'}))} className="text-[#5621bf] underline">Terms of Service</button> &amp; <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'privacy'}))} className="text-[#5621bf] underline">Privacy Policy</button>
-                </label>
+              <div className="pt-0.5">
+                <div className="flex items-start gap-2.5">
+                  <input
+                    type="checkbox"
+                    id="terms"
+                    checked={acceptedTerms}
+                    onChange={(e) => {
+                      setAcceptedTerms(e.target.checked);
+                      if (e.target.checked) clearFieldError('terms');
+                    }}
+                    className="w-4 h-4 mt-0.5 accent-[#5621bf] purple-checkbox rounded border-slate-300 focus:ring-2 focus:ring-[#5621bf]/30 cursor-pointer shrink-0"
+                  />
+                  <label htmlFor="terms" className="text-[11px] sm:text-xs font-semibold text-slate-600 cursor-pointer leading-tight">
+                    I agree to the <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'terms'}))} className="text-[#5621bf] font-bold hover:underline">Terms of Service</button> &amp; <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'privacy'}))} className="text-[#5621bf] font-bold hover:underline">Privacy Policy</button> <span className="text-rose-500 font-bold">*</span>
+                  </label>
+                </div>
+                {errors.terms && <p className="text-[11px] font-semibold text-rose-500 mt-1">{errors.terms}</p>}
               </div>
             )}
 
@@ -333,6 +367,7 @@ export default function AuthPage() {
               {loading && <i className="fa-solid fa-circle-notch fa-spin" />}
             </button>
           </form>
+          </div>{/* end auth-tab-content */}
         </div>
       </main>
 

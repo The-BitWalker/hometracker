@@ -75,21 +75,34 @@ export default function DashboardPage() {
   const [modal, setModal] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showTip, setShowTip] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [copyIcon, setCopyIcon] = useState('fa-regular fa-copy');
 
   // Form state
   const [homeAddress, setHomeAddress] = useState('');
   const [targetTime, setTargetTime] = useState('');
 
-  // Map
+  // Map & Profile refs
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const markersRef = useRef({});
   const routeLinesRef = useRef([]);
+  const profileMenuRef = useRef(null);
 
   // GPS
   const watchIdRef = useRef(null);
   const liveGPSRef = useRef({ lat: null, lng: null });
+
+  // Profile Menu click outside
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(event.target)) {
+        setShowProfileMenu(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // ---- Auth Check ----
   useEffect(() => {
@@ -273,8 +286,34 @@ export default function DashboardPage() {
     window.location.href = '/auth';
   };
 
+  const fallbackCopyTextToClipboard = (text) => {
+    try {
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      textArea.style.position = 'fixed';
+      textArea.style.top = '0';
+      textArea.style.left = '0';
+      textArea.style.opacity = '0';
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+    } catch (err) {
+      console.error('Fallback copy error:', err);
+    }
+  };
+
   const handleCopyCode = () => {
-    navigator.clipboard.writeText(user?.family_code || '').catch(() => {});
+    const code = user?.family_code || '';
+    if (!code) return;
+
+    if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      navigator.clipboard.writeText(code).catch(() => fallbackCopyTextToClipboard(code));
+    } else {
+      fallbackCopyTextToClipboard(code);
+    }
+
     setCopyIcon('fa-solid fa-check text-emerald-500');
     setTimeout(() => setCopyIcon('fa-regular fa-copy'), 2000);
   };
@@ -395,36 +434,91 @@ export default function DashboardPage() {
   const homeIsSet = home?.home_address;
 
   return (
-    <div className="fixed inset-0 flex flex-col justify-between overflow-hidden">
+    <div className="min-h-screen min-h-dvh flex flex-col justify-between relative overflow-x-hidden">
       <CustomModal modal={modal} onClose={() => setModal(null)} />
 
       <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[800px] h-[350px] bg-gradient-to-b from-[#e2f0ff]/60 via-purple-100/30 to-transparent blur-3xl -z-10 pointer-events-none" />
       <WaveBackground />
 
       {/* Header */}
-      <header className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between z-20 shrink-0">
+      <header className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between z-20 shrink-0">
         <Link href="/" className="flex items-center gap-2 sm:gap-2.5 group">
-          <Image src="/logo.png" alt="HOMETRACKER Logo" width={36} height={36} className="w-7 h-7 sm:w-9 sm:h-9 object-contain group-hover:scale-105 transition-transform duration-300" />
-          <span className="font-extrabold text-lg sm:text-xl tracking-tight text-slate-900">HOME<span className="text-[#5621bf]">TRACKER</span></span>
+          <Image src="/logo.png" alt="HOMETRACKER Logo" width={40} height={40} className="w-8 h-8 sm:w-10 sm:h-10 object-contain group-hover:scale-105 transition-transform duration-300" />
+          <span className="font-extrabold text-lg sm:text-xl tracking-tight text-slate-900">
+            HOME<span className="text-[#5621bf]">TRACKER</span>
+          </span>
         </Link>
 
-        <div className="flex items-center gap-2 sm:gap-3">
-          <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-white border border-slate-200 shadow-sm">
-            <div className="w-6 h-6 rounded-full avatar-gradient text-white flex items-center justify-center text-[10px] font-black">{(user?.name || 'U').substring(0, 2).toUpperCase()}</div>
-            <span className="text-xs font-bold text-slate-800">{user?.name}</span>
-            <span className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold uppercase ${isParent ? 'bg-[#5621bf]/10 text-[#5621bf]' : 'bg-amber-100 text-amber-800'}`}>
-              {isParent ? 'Parent' : 'Child / Teen'}
-            </span>
-          </div>
-          <button onClick={handleSignOut} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-rose-200 bg-rose-50/70 hover:bg-rose-100 text-rose-600 font-extrabold text-xs transition-all duration-200 active:scale-95">
-            <i className="fa-solid fa-right-from-bracket text-[11px]" />
-            <span className="hidden sm:inline">Sign Out</span>
+        {/* Profile Dropdown Container */}
+        <div className="relative" ref={profileMenuRef}>
+          <button
+            onClick={() => setShowProfileMenu(!showProfileMenu)}
+            className="flex items-center gap-2.5 sm:gap-3 px-3 sm:px-4 py-1.5 sm:py-2 rounded-2xl bg-white/95 backdrop-blur-md border border-slate-200 shadow-sm hover:shadow-md hover:border-[#5621bf]/30 transition-all duration-200 active:scale-98 cursor-pointer"
+            aria-expanded={showProfileMenu}
+            aria-haspopup="true"
+          >
+            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full avatar-gradient text-white flex items-center justify-center text-xs font-black shadow-sm shrink-0">
+              {(user?.name || 'U').substring(0, 2).toUpperCase()}
+            </div>
+            <div className="flex flex-col items-start text-left min-w-[70px] sm:min-w-[100px]">
+              <span className="text-xs sm:text-sm font-extrabold text-slate-900 leading-tight truncate max-w-[110px] sm:max-w-[150px]">
+                {user?.name}
+              </span>
+              <span className={`text-[9px] sm:text-[10px] font-extrabold uppercase tracking-wider ${isParent ? 'text-[#5621bf]' : 'text-amber-700'}`}>
+                {isParent ? 'Parent' : 'Child / Teen'}
+              </span>
+            </div>
+            <i className={`fa-solid fa-chevron-down text-[10px] text-slate-400 transition-transform duration-200 ml-0.5 sm:ml-1 ${showProfileMenu ? 'rotate-180 text-[#5621bf]' : ''}`} />
           </button>
+
+          {/* Dropdown Menu */}
+          {showProfileMenu && (
+            <div className="absolute right-0 mt-2 w-64 sm:w-72 bg-white/95 backdrop-blur-xl rounded-2xl p-3 sm:p-4 shadow-2xl border border-slate-200/90 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+              {/* Profile Header */}
+              <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
+                <div className="w-10 h-10 rounded-full avatar-gradient text-white flex items-center justify-center text-sm font-black shadow-sm shrink-0">
+                  {(user?.name || 'U').substring(0, 2).toUpperCase()}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-black text-slate-900 truncate">{user?.name}</p>
+                  <p className="text-xs font-medium text-slate-500 truncate">{user?.email}</p>
+                  <span className={`inline-block mt-1 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider ${isParent ? 'bg-[#5621bf]/10 text-[#5621bf]' : 'bg-amber-100 text-amber-800'}`}>
+                    {isParent ? 'Parent Account' : 'Child / Teen Account'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Family Code row */}
+              <div className="py-2.5 px-3 my-2.5 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between">
+                <div>
+                  <p className="text-[9px] font-extrabold uppercase text-slate-400">Family Code</p>
+                  <p className="text-xs font-black text-[#5621bf] tracking-widest">{user?.family_code || '--'}</p>
+                </div>
+                <button onClick={handleCopyCode} className="text-xs font-bold text-slate-500 hover:text-[#5621bf] p-1 transition flex items-center gap-1">
+                  <i className={copyIcon} />
+                </button>
+              </div>
+
+              {/* Menu Actions */}
+              <div className="pt-1 space-y-1">
+                <button
+                  onClick={handleSignOut}
+                  className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 font-extrabold text-xs transition-colors duration-150 group"
+                >
+                  <span className="flex items-center gap-2">
+                    <i className="fa-solid fa-right-from-bracket text-sm group-hover:-translate-x-0.5 transition-transform" />
+                    Sign Out of Account
+                  </span>
+                  <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </header>
 
       {/* Main */}
-      <main className="w-full max-w-7xl mx-auto px-2 sm:px-6 my-auto flex-1 flex flex-col justify-center items-center z-10 min-h-0 overflow-hidden py-1 sm:py-2">
+      <main className="w-full max-w-7xl mx-auto px-2 sm:px-6 my-auto flex-1 flex flex-col justify-center items-center z-10 min-h-0 py-2 sm:py-3">
         <div className="w-full h-full max-h-full overflow-y-auto lg:overflow-hidden pb-4 lg:pb-0 custom-scroll">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 lg:gap-4 items-stretch lg:h-full lg:min-h-0">
             
