@@ -3,9 +3,15 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import gsap from 'gsap';
 
 // ============================================================
-// Utility functions
+// Constants
+// ============================================================
+const AT_HOME_THRESHOLD_KM = 0.1; // 100 meters
+
+// ============================================================
+// Utility: Haversine distance (used for quick threshold checks)
 // ============================================================
 function calculateDistanceKm(lat1, lon1, lat2, lon2) {
   if (!lat1 || !lon1 || !lat2 || !lon2) return 0;
@@ -14,11 +20,6 @@ function calculateDistanceKm(lat1, lon1, lat2, lon2) {
   const dLon = ((lon2 - lon1) * Math.PI) / 180;
   const a = Math.sin(dLat / 2) ** 2 + Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function calculateTravelTimeMins(distanceKm) {
-  if (!distanceKm || distanceKm <= 0.05) return 0;
-  return Math.ceil(((distanceKm * 1.3) / 30) * 60) + 2;
 }
 
 // ============================================================
@@ -38,9 +39,20 @@ function CustomModal({ modal, onClose }) {
           <h3 className="text-base font-black text-slate-900 tracking-tight">{modal.title}</h3>
           <p className="text-xs font-semibold text-slate-600 mt-1 leading-relaxed">{modal.message}</p>
         </div>
-        <button onClick={onClose} className="w-full py-2.5 bg-[#5621bf] hover:bg-[#431799] text-white font-extrabold text-xs rounded-xl shadow-md transition active:scale-95">
-          Got it
-        </button>
+        {modal.onConfirm ? (
+          <div className="flex gap-2 mt-2">
+            <button onClick={onClose} className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs rounded-xl transition active:scale-95 cursor-pointer">
+              Cancel
+            </button>
+            <button onClick={() => { modal.onConfirm(); onClose(); }} className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-xl shadow-md transition active:scale-95 cursor-pointer">
+              {modal.confirmText || 'Confirm'}
+            </button>
+          </div>
+        ) : (
+          <button onClick={onClose} className="w-full py-2.5 bg-[#5621bf] hover:bg-[#431799] text-white font-extrabold text-xs rounded-xl shadow-md transition active:scale-95 cursor-pointer">
+            Got it
+          </button>
+        )}
       </div>
     </div>
   );
@@ -78,6 +90,9 @@ export default function DashboardPage() {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [copyIcon, setCopyIcon] = useState('fa-regular fa-copy');
 
+  // ETA cache: { memberId: { distance_km, duration_min, timestamp } }
+  const [etaCache, setEtaCache] = useState({});
+
   // Form state
   const [homeAddress, setHomeAddress] = useState('');
   const [targetTime, setTargetTime] = useState('');
@@ -88,6 +103,7 @@ export default function DashboardPage() {
   const markersRef = useRef({});
   const routeLinesRef = useRef([]);
   const profileMenuRef = useRef(null);
+  const settingsContentRef = useRef(null);
 
   // GPS
   const watchIdRef = useRef(null);
@@ -103,6 +119,24 @@ export default function DashboardPage() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Settings Accordion Animation
+  useEffect(() => {
+    if (settingsContentRef.current) {
+      if (showSettings) {
+        gsap.to(settingsContentRef.current, { height: 'auto', opacity: 1, duration: 0.3, ease: 'power2.out' });
+      } else {
+        gsap.to(settingsContentRef.current, { height: 0, opacity: 0, duration: 0.3, ease: 'power2.out' });
+      }
+    }
+  }, [showSettings]);
+
+  // Force open settings if home is not set
+  useEffect(() => {
+    if (user?.role === 'parent' && home && !home.home_address) {
+      setShowSettings(true);
+    }
+  }, [user, home]);
 
   // ---- Auth Check ----
   useEffect(() => {
@@ -127,6 +161,26 @@ export default function DashboardPage() {
       });
   }, []);
 
+  // ---- Fetch OSRM ETA for a member ----
+  const fetchEta = useCallback(async (memberId, memberLat, memberLng, homeLat, homeLng) => {
+    // Check cache — reuse if less than 30s old
+    const cached = etaCache[memberId];
+    if (cached && Date.now() - cached.timestamp < 30000) {
+      return cached;
+    }
+
+    try {
+      const res = await fetch(`/api/directions?olat=${memberLat}&olng=${memberLng}&dlat=${homeLat}&dlng=${homeLng}`);
+      const data = await res.json();
+      const entry = { distance_km: data.distance_km, duration_min: data.duration_min, timestamp: Date.now() };
+      setEtaCache((prev) => ({ ...prev, [memberId]: entry }));
+      return entry;
+    } catch (e) {
+      console.warn('ETA fetch failed:', e);
+      return null;
+    }
+  }, [etaCache]);
+
   // ---- Refresh Data ----
   const refreshData = useCallback(async () => {
     if (!user) return;
@@ -143,6 +197,21 @@ export default function DashboardPage() {
       console.error('Refresh error:', e);
     }
   }, [user]);
+
+  // ---- Fetch ETAs when members/home change ----
+  useEffect(() => {
+    if (!home?.home_lat || members.length === 0) return;
+
+    members.forEach((member) => {
+      if (member.role === 'child' && member.current_lat && member.current_lng) {
+        const dist = calculateDistanceKm(member.current_lat, member.current_lng, home.home_lat, home.home_lng);
+        // Only fetch ETA if not "at home"
+        if (dist > AT_HOME_THRESHOLD_KM) {
+          fetchEta(member.id, member.current_lat, member.current_lng, home.home_lat, home.home_lng);
+        }
+      }
+    });
+  }, [members, home, fetchEta]);
 
   // ---- Init Map & Data ----
   useEffect(() => {
@@ -179,7 +248,7 @@ export default function DashboardPage() {
 
       // Request location permission for everyone
       if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(() => {}, () => {});
+        navigator.geolocation.getCurrentPosition(() => { }, () => { });
       }
 
       // Start location watch for children
@@ -238,7 +307,7 @@ export default function DashboardPage() {
         iconAnchor: [18, 18],
       });
       const marker = L.marker([home.home_lat, home.home_lng], { icon: homeIcon })
-        .bindPopup(`<div class="p-1 font-bold text-center"><p class="text-xs text-purple-900">🏠 Home</p><p class="text-[10px] text-slate-500">${home.home_address || 'Home'}</p></div>`)
+        .bindPopup(`<div class="p-1 font-bold text-center"><p class="text-xs text-purple-900"><i class="fa-solid fa-house text-sm"></i> Home</p><p class="text-[10px] text-slate-500">${home.home_address || 'Home'}</p></div>`)
         .addTo(map);
       markersRef.current.home = marker;
       bounds.push([home.home_lat, home.home_lng]);
@@ -248,26 +317,33 @@ export default function DashboardPage() {
     members.forEach((member) => {
       if (member.role === 'child' && member.current_lat && member.current_lng) {
         const initials = (member.name || 'C').substring(0, 2).toUpperCase();
+        const distKm = home?.home_lat ? calculateDistanceKm(member.current_lat, member.current_lng, home.home_lat, home.home_lng) : 999;
+        const isAtHome = distKm <= AT_HOME_THRESHOLD_KM;
+
         const memberIcon = L.divIcon({
           className: 'custom-pin-wrap',
-          html: `<div class="custom-map-pin pin-member w-9 h-9"><span class="text-xs">${initials}</span></div>`,
+          html: `<div class="custom-map-pin ${isAtHome ? 'pin-home' : 'pin-member'} w-9 h-9"><span class="text-xs">${initials}</span></div>`,
           iconSize: [36, 36],
           iconAnchor: [18, 18],
         });
 
-        let distKm = 0, travelMins = 0;
-        if (home?.home_lat) {
-          distKm = calculateDistanceKm(member.current_lat, member.current_lng, home.home_lat, home.home_lng);
-          travelMins = calculateTravelTimeMins(distKm);
+        const eta = etaCache[member.id];
+        let popupText;
+        if (isAtHome) {
+          popupText = `<div class="p-1 text-center font-bold"><p class="text-xs text-slate-900">${member.name}</p><p class="text-[10px] text-emerald-600 mt-1 font-extrabold">At Home</p></div>`;
+        } else if (eta) {
+          popupText = `<div class="p-1 text-center font-bold"><p class="text-xs text-slate-900">${member.name}</p><p class="text-[10px] text-[#5621bf] mt-1">${eta.distance_km} km &middot; ~${eta.duration_min} min by bike</p></div>`;
+        } else {
+          popupText = `<div class="p-1 text-center font-bold"><p class="text-xs text-slate-900">${member.name}</p><p class="text-[10px] text-slate-400 mt-1">${distKm.toFixed(1)} km away</p></div>`;
         }
 
         const marker = L.marker([member.current_lat, member.current_lng], { icon: memberIcon })
-          .bindPopup(`<div class="p-1 text-center font-bold"><p class="text-xs text-slate-900">${member.name}</p><p class="text-[10px] text-[#5621bf] mt-1">${distKm.toFixed(1)} km to Home (~${travelMins} min)</p></div>`)
+          .bindPopup(popupText)
           .addTo(map);
         markersRef.current[member.id] = marker;
         bounds.push([member.current_lat, member.current_lng]);
 
-        if (home?.home_lat) {
+        if (home?.home_lat && !isAtHome) {
           const line = L.polyline([[member.current_lat, member.current_lng], [home.home_lat, home.home_lng]], {
             color: '#3b82f6', weight: 3, dashArray: '5, 8', opacity: 0.7,
           }).addTo(map);
@@ -278,7 +354,7 @@ export default function DashboardPage() {
 
     if (bounds.length > 1) map.fitBounds(bounds, { padding: [50, 50] });
     else if (bounds.length === 1) map.setView(bounds[0], 14);
-  }, [home, members]);
+  }, [home, members, etaCache]);
 
   // ---- Actions ----
   const handleSignOut = async () => {
@@ -318,39 +394,91 @@ export default function DashboardPage() {
     setTimeout(() => setCopyIcon('fa-regular fa-copy'), 2000);
   };
 
-  const handleSaveAddress = async () => {
-    if (!homeAddress.trim()) { setModal({ type: 'warning', title: 'Invalid Address', message: 'Please enter a valid home address.' }); return; }
+  const handleLeaveCircle = () => {
+    setModal({
+      type: 'error',
+      title: 'Leave Family Circle?',
+      message: 'Are you sure you want to leave? Your account will be deleted and you will need a new family code to join again.',
+      confirmText: 'Leave & Delete',
+      onConfirm: async () => {
+        try {
+          const res = await fetch('/api/circle/member/leave', { method: 'POST' });
+          if (res.ok) window.location.href = '/auth';
+          else setModal({ type: 'error', title: 'Error', message: 'Failed to leave circle.' });
+        } catch(e) {
+          setModal({ type: 'error', title: 'Error', message: 'Failed to leave circle.' });
+        }
+      }
+    });
+  };
+
+  const handleKickMember = (member) => {
+    setModal({
+      type: 'warning',
+      title: 'Kick Member?',
+      message: `Are you sure you want to remove ${member.name} from the family circle? Their account will be deleted.`,
+      confirmText: 'Kick Member',
+      onConfirm: async () => {
+        try {
+          const res = await fetch('/api/circle/member/kick', { 
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: member.id })
+          });
+          if (res.ok) await refreshData();
+          else setModal({ type: 'error', title: 'Error', message: 'Failed to kick member.' });
+        } catch(e) {
+          setModal({ type: 'error', title: 'Error', message: 'Failed to kick member.' });
+        }
+      }
+    });
+  };
+
+  const handleDeleteCircle = () => {
+    setModal({
+      type: 'error',
+      title: 'Delete Family Circle?',
+      message: 'This will remove ALL members, clear your home base, and generate a new family code. This action cannot be undone.',
+      confirmText: 'Delete Everything',
+      onConfirm: async () => {
+        try {
+          const res = await fetch('/api/circle/delete', { method: 'POST' });
+          if (res.ok) {
+            const data = await res.json();
+            setUser(prev => ({...prev, family_code: data.new_family_code}));
+            setHome(null);
+            setMembers([]);
+            setModal({ type: 'success', title: 'Circle Deleted', message: 'Your family circle has been disbanded and you have a new family code.' });
+          } else setModal({ type: 'error', title: 'Error', message: 'Failed to delete circle.' });
+        } catch(e) {
+          setModal({ type: 'error', title: 'Error', message: 'Failed to delete circle.' });
+        }
+      }
+    });
+  };
+
+  const handleSaveSettings = async () => {
+    if (!homeAddress.trim() || !targetTime) {
+      setModal({ type: 'warning', title: 'Incomplete', message: 'Please enter both an address and a curfew time.' });
+      return;
+    }
     try {
       const res = await fetch('/api/circle/home', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ home_address: homeAddress.trim() }),
+        body: JSON.stringify({ home_address: homeAddress.trim(), target_home_time: targetTime }),
       });
-      const data = await res.json();
+      
+      // Attempt to read JSON, fallback if empty response
+      let data;
+      try { data = await res.json(); } catch(e) { data = {}; }
+      
       if (res.ok) {
-        setModal({ type: 'success', title: 'Home Base Saved 🎉', message: 'Our Home address has been updated successfully!' });
+        setModal({ type: 'success', title: 'Settings Saved', message: 'Family settings updated successfully.' });
         setShowSettings(false);
         await refreshData();
       } else {
-        setModal({ type: 'error', title: 'Error', message: data.error });
-      }
-    } catch (e) {
-      setModal({ type: 'error', title: 'Error', message: e.message });
-    }
-  };
-
-  const handleSaveTime = async () => {
-    if (!targetTime) { setModal({ type: 'warning', title: 'Select Time', message: 'Please select a time to be home.' }); return; }
-    try {
-      const res = await fetch('/api/circle/home', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ target_home_time: targetTime }),
-      });
-      if (res.ok) {
-        setModal({ type: 'success', title: 'Time Saved ⏰', message: 'Time to be Home has been updated for your family!' });
-        setShowSettings(false);
-        await refreshData();
+        setModal({ type: 'error', title: 'Error', message: data.error || 'Failed to save settings.' });
       }
     } catch (e) {
       setModal({ type: 'error', title: 'Error', message: e.message });
@@ -368,16 +496,10 @@ export default function DashboardPage() {
     }
   };
 
-  // ---- Departure Calculation (children only) ----
-  let travelTimeText = '-- min';
-  let leaveByText = '--:--';
-  let calcSubtitle = 'Waiting for Home location setup.';
-  
-  // Create state to store GPS position for rendering
+  // ---- Child departure calculation ----
   const [currentGPS, setCurrentGPS] = useState({ lat: null, lng: null });
 
   useEffect(() => {
-    // Keep state synced with the ref for rendering purposes if it's a child
     if (user?.role === 'child') {
       const interval = setInterval(() => {
         if (liveGPSRef.current.lat !== currentGPS.lat || liveGPSRef.current.lng !== currentGPS.lng) {
@@ -388,26 +510,41 @@ export default function DashboardPage() {
     }
   }, [user, currentGPS.lat, currentGPS.lng]);
 
-  if (user?.role === 'child' && home?.home_lat) {
-    const userLat = currentGPS.lat;
-    const userLng = currentGPS.lng;
+  // Also fetch own ETA for child
+  useEffect(() => {
+    if (user?.role === 'child' && currentGPS.lat && home?.home_lat) {
+      const dist = calculateDistanceKm(currentGPS.lat, currentGPS.lng, home.home_lat, home.home_lng);
+      if (dist > AT_HOME_THRESHOLD_KM) {
+        fetchEta('self', currentGPS.lat, currentGPS.lng, home.home_lat, home.home_lng);
+      }
+    }
+  }, [user, currentGPS, home, fetchEta]);
 
-    if (userLat) {
-      const distKm = calculateDistanceKm(userLat, userLng, home.home_lat, home.home_lng);
-      const travelMins = calculateTravelTimeMins(distKm);
-      travelTimeText = `${travelMins} min`;
+  let childStatus = null;
+  if (user?.role === 'child' && home?.home_lat && currentGPS.lat) {
+    const dist = calculateDistanceKm(currentGPS.lat, currentGPS.lng, home.home_lat, home.home_lng);
+    const isAtHome = dist <= AT_HOME_THRESHOLD_KM;
+    const selfEta = etaCache['self'];
 
+    if (isAtHome) {
+      childStatus = { isAtHome: true, text: "You're Home", subtitle: 'You are within range of your Home Base.' };
+    } else if (selfEta) {
+      let leaveByText = '';
+      let subtitle = `${selfEta.distance_km} km from Home by bike (~${selfEta.duration_min} min).`;
       if (home.target_home_time) {
         const [tH, tM] = home.target_home_time.split(':').map(Number);
         const targetDate = new Date();
         targetDate.setHours(tH, tM, 0, 0);
-        const leaveDate = new Date(targetDate.getTime() - travelMins * 60000);
+        const leaveDate = new Date(targetDate.getTime() - selfEta.duration_min * 60000);
         leaveByText = `${String(leaveDate.getHours()).padStart(2, '0')}:${String(leaveDate.getMinutes()).padStart(2, '0')}`;
-        calcSubtitle = `Leave by ${leaveByText} to reach Home by ${home.target_home_time} (${distKm.toFixed(1)} km away).`;
-      } else {
-        calcSubtitle = `${distKm.toFixed(1)} km from Home. Time to be home not set by parent yet.`;
+        subtitle = `Leave by ${leaveByText} to arrive by ${home.target_home_time}.`;
       }
+      childStatus = { isAtHome: false, travelMin: selfEta.duration_min, leaveBy: leaveByText, subtitle, distKm: selfEta.distance_km };
+    } else {
+      childStatus = { isAtHome: false, travelMin: '--', leaveBy: '', subtitle: `${dist.toFixed(1)} km from Home. Calculating route...`, distKm: dist.toFixed(1) };
     }
+  } else if (user?.role === 'child') {
+    childStatus = { isAtHome: false, travelMin: '--', leaveBy: '', subtitle: home?.home_lat ? 'Waiting for GPS signal...' : 'Waiting for parent to set Home Base.', distKm: '--' };
   }
 
   // ---- Loading Screen ----
@@ -433,144 +570,218 @@ export default function DashboardPage() {
   const isParent = user?.role === 'parent';
   const homeIsSet = home?.home_address;
 
+  // ---- Helper: get member status info ----
+  const getMemberStatus = (member) => {
+    if (member.role === 'parent') return { label: 'Home', color: 'text-slate-500', badge: null };
+    if (!member.current_lat || !home?.home_lat) return { label: 'Location unknown', color: 'text-slate-400', badge: null };
+
+    const dist = calculateDistanceKm(member.current_lat, member.current_lng, home.home_lat, home.home_lng);
+    if (dist <= AT_HOME_THRESHOLD_KM) {
+      return { label: 'At Home', color: 'text-emerald-600', badge: 'bg-emerald-100 text-emerald-700', isHome: true };
+    }
+
+    const eta = etaCache[member.id];
+    if (eta) {
+      return { label: `~${eta.duration_min} min`, color: 'text-[#5621bf]', sublabel: `${eta.distance_km} km by bike`, badge: null };
+    }
+
+    return { label: `${dist.toFixed(1)} km away`, color: 'text-slate-500', badge: null };
+  };
+
   return (
-    <div className="min-h-screen min-h-dvh flex flex-col justify-between relative overflow-x-hidden">
+    <div className="min-h-screen min-h-dvh flex flex-col relative overflow-x-hidden">
       <CustomModal modal={modal} onClose={() => setModal(null)} />
 
       <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[800px] h-[350px] bg-gradient-to-b from-[#e2f0ff]/60 via-purple-100/30 to-transparent blur-3xl -z-10 pointer-events-none" />
       <WaveBackground />
 
-      {/* Header */}
-      <header className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between z-20 shrink-0">
-        <Link href="/" className="flex items-center gap-2 sm:gap-2.5 group">
-          <Image src="/logo.png" alt="HOMETRACKER Logo" width={40} height={40} className="w-8 h-8 sm:w-10 sm:h-10 object-contain group-hover:scale-105 transition-transform duration-300" />
-          <span className="font-extrabold text-lg sm:text-xl tracking-tight text-slate-900">
-            HOME<span className="text-[#5621bf]">TRACKER</span>
-          </span>
-        </Link>
+      {/* ===== Header ===== */}
+      <header className="w-full px-3 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between z-20 shrink-0">
+        <div className="flex items-center gap-2 sm:gap-4">
+          <Link href="/" className="flex items-center gap-2 group">
+            <Image src="/logo.png" alt="HOMETRACKER Logo" width={36} height={36} className="w-8 h-8 sm:w-9 sm:h-9 object-contain group-hover:scale-105 transition-transform duration-300" />
+            <span className="font-extrabold text-lg tracking-tight text-slate-900">
+              HOME<span className="text-[#5621bf]">TRACKER</span>
+            </span>
+          </Link>
+        </div>
 
-        {/* Profile Dropdown Container */}
-        <div className="relative" ref={profileMenuRef}>
-          <button
-            onClick={() => setShowProfileMenu(!showProfileMenu)}
-            className="flex items-center gap-2.5 sm:gap-3 px-3 sm:px-4 py-1.5 sm:py-2 rounded-2xl bg-white/95 backdrop-blur-md border border-slate-200 shadow-sm hover:shadow-md hover:border-[#5621bf]/30 transition-all duration-200 active:scale-98 cursor-pointer"
-            aria-expanded={showProfileMenu}
-            aria-haspopup="true"
-          >
-            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full avatar-gradient text-white flex items-center justify-center text-xs font-black shadow-sm shrink-0">
-              {(user?.name || 'U').substring(0, 2).toUpperCase()}
-            </div>
-            <div className="flex flex-col items-start text-left min-w-[70px] sm:min-w-[100px]">
-              <span className="text-xs sm:text-sm font-extrabold text-slate-900 leading-tight truncate max-w-[110px] sm:max-w-[150px]">
+        <div className="flex items-center gap-2">
+          {/* Center Home button */}
+          {homeIsSet && (
+            <button onClick={centerMapOnHome} className="h-10 px-3 rounded-xl bg-white/80 backdrop-blur-sm border border-slate-200 text-slate-700 text-xs font-bold shadow-sm hover:bg-white transition flex items-center gap-1.5 cursor-pointer">
+              <i className="fa-solid fa-house text-[#5621bf] text-[11px]" />
+              <span className="hidden sm:inline">Center Home</span>
+            </button>
+          )}
+
+          {/* Profile Dropdown */}
+          <div className="relative" ref={profileMenuRef}>
+            <button
+              onClick={() => setShowProfileMenu(!showProfileMenu)}
+              className="h-10 flex items-center gap-2 px-2 sm:px-3 rounded-2xl bg-white/90 backdrop-blur-md border border-slate-200 shadow-sm hover:shadow-md hover:border-[#5621bf]/30 transition-all duration-200 active:scale-98 cursor-pointer"
+              aria-expanded={showProfileMenu}
+              aria-haspopup="true"
+            >
+              <div className="w-7 h-7 rounded-full avatar-gradient text-white flex items-center justify-center text-[10px] font-black shadow-sm shrink-0">
+                {(user?.name || 'U').substring(0, 2).toUpperCase()}
+              </div>
+              <span className="hidden sm:block text-xs font-extrabold text-slate-900 truncate max-w-[100px]">
                 {user?.name}
               </span>
-              <span className={`text-[9px] sm:text-[10px] font-extrabold uppercase tracking-wider ${isParent ? 'text-[#5621bf]' : 'text-amber-700'}`}>
-                {isParent ? 'Parent' : 'Child / Teen'}
-              </span>
-            </div>
-            <i className={`fa-solid fa-chevron-down text-[10px] text-slate-400 transition-transform duration-200 ml-0.5 sm:ml-1 ${showProfileMenu ? 'rotate-180 text-[#5621bf]' : ''}`} />
-          </button>
+              <i className={`fa-solid fa-chevron-down text-[9px] text-slate-400 transition-transform duration-200 ${showProfileMenu ? 'rotate-180 text-[#5621bf]' : ''}`} />
+            </button>
 
-          {/* Dropdown Menu */}
-          {showProfileMenu && (
-            <div className="absolute right-0 mt-2 w-64 sm:w-72 bg-white/95 backdrop-blur-xl rounded-2xl p-3 sm:p-4 shadow-2xl border border-slate-200/90 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
-              {/* Profile Header */}
-              <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
-                <div className="w-10 h-10 rounded-full avatar-gradient text-white flex items-center justify-center text-sm font-black shadow-sm shrink-0">
-                  {(user?.name || 'U').substring(0, 2).toUpperCase()}
+            {/* Dropdown Menu */}
+            {showProfileMenu && (
+              <div className="absolute right-0 mt-2 w-64 sm:w-72 bg-white/95 backdrop-blur-xl rounded-2xl p-3 sm:p-4 shadow-2xl border border-slate-200/90 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+                {/* Profile Header */}
+                <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
+                  <div className="w-10 h-10 rounded-full avatar-gradient text-white flex items-center justify-center text-sm font-black shadow-sm shrink-0">
+                    {(user?.name || 'U').substring(0, 2).toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-black text-slate-900 truncate">{user?.name}</p>
+                    <p className="text-xs font-medium text-slate-500 truncate">{user?.email}</p>
+                    <span className={`inline-block mt-1 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider ${isParent ? 'bg-[#5621bf]/10 text-[#5621bf]' : 'bg-amber-100 text-amber-800'}`}>
+                      {isParent ? 'Parent Account' : 'Child / Teen Account'}
+                    </span>
+                  </div>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-black text-slate-900 truncate">{user?.name}</p>
-                  <p className="text-xs font-medium text-slate-500 truncate">{user?.email}</p>
-                  <span className={`inline-block mt-1 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider ${isParent ? 'bg-[#5621bf]/10 text-[#5621bf]' : 'bg-amber-100 text-amber-800'}`}>
-                    {isParent ? 'Parent Account' : 'Child / Teen Account'}
-                  </span>
+
+                {/* Family Code row */}
+                <div className="py-2.5 px-3 my-2.5 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between">
+                  <div>
+                    <p className="text-[9px] font-extrabold uppercase text-slate-400">Family Code</p>
+                    <p className="text-xs font-black text-[#5621bf] tracking-widest">{user?.family_code || '--'}</p>
+                  </div>
+                  <button onClick={handleCopyCode} className="text-xs font-bold text-slate-500 hover:text-[#5621bf] p-1 transition flex items-center gap-1 cursor-pointer">
+                    <i className={copyIcon} />
+                  </button>
                 </div>
-              </div>
 
-              {/* Family Code row */}
-              <div className="py-2.5 px-3 my-2.5 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between">
-                <div>
-                  <p className="text-[9px] font-extrabold uppercase text-slate-400">Family Code</p>
-                  <p className="text-xs font-black text-[#5621bf] tracking-widest">{user?.family_code || '--'}</p>
-                </div>
-                <button onClick={handleCopyCode} className="text-xs font-bold text-slate-500 hover:text-[#5621bf] p-1 transition flex items-center gap-1">
-                  <i className={copyIcon} />
-                </button>
-              </div>
-
-              {/* Menu Actions */}
-              <div className="pt-1 space-y-1">
-                <button
-                  onClick={handleSignOut}
-                  className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 font-extrabold text-xs transition-colors duration-150 group"
-                >
-                  <span className="flex items-center gap-2">
-                    <i className="fa-solid fa-right-from-bracket text-sm group-hover:-translate-x-0.5 transition-transform" />
-                    Sign Out of Account
-                  </span>
-                  <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      </header>
-
-      {/* Main */}
-      <main className="w-full max-w-7xl mx-auto px-2 sm:px-6 my-auto flex-1 flex flex-col justify-center items-center z-10 min-h-0 py-2 sm:py-3">
-        <div className="w-full h-full max-h-full overflow-y-auto lg:overflow-hidden pb-4 lg:pb-0 custom-scroll">
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 lg:gap-4 items-stretch lg:h-full lg:min-h-0">
-            
-            {/* LEFT PANEL */}
-            <div className="order-last lg:order-first lg:col-span-5 flex flex-col min-h-0 lg:h-full overflow-visible lg:overflow-hidden">
-              <div className="glass-panel rounded-2xl p-3 sm:p-5 shadow-[0_10px_30px_-5px_rgba(0,0,0,0.05),0_0_0_1px_#e8e8e8] flex-1 flex flex-col min-h-0 card-scroll custom-scroll space-y-3 sm:space-y-4">
-
-              {/* Welcome */}
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3 shrink-0">
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Welcome Back</p>
-                  <h1 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">Welcome, {user?.name}!</h1>
-                </div>
-                <div className="text-right">
-                  <p className="text-[9px] font-extrabold uppercase text-slate-400">Family Code</p>
-                  <button onClick={handleCopyCode} className="inline-flex items-center gap-1 text-xs font-black text-[#5621bf] bg-[#5621bf]/10 px-2.5 py-1 rounded-lg hover:bg-[#5621bf]/20 transition">
-                    <span>{user?.family_code}</span>
-                    <i className={`${copyIcon} text-[10px]`} />
+                {/* Menu Actions */}
+                <div className="pt-1 space-y-1">
+                  {!isParent && (
+                    <button
+                      onClick={handleLeaveCircle}
+                      className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-600 font-extrabold text-xs transition-colors duration-150 group cursor-pointer mb-1"
+                    >
+                      <span className="flex items-center gap-2">
+                        <i className="fa-solid fa-person-walking-arrow-right text-sm group-hover:-translate-x-0.5 transition-transform" />
+                        Leave Family Circle
+                      </span>
+                      <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
+                    </button>
+                  )}
+                  <button
+                    onClick={handleSignOut}
+                    className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 font-extrabold text-xs transition-colors duration-150 group cursor-pointer"
+                  >
+                    <span className="flex items-center gap-2">
+                      <i className="fa-solid fa-right-from-bracket text-sm group-hover:-translate-x-0.5 transition-transform" />
+                      Sign Out
+                    </span>
+                    <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
                   </button>
                 </div>
               </div>
+            )}
+          </div>
+        </div>
+      </header>
 
-              {/* Home Address Card */}
-              <div className="bg-gradient-to-br from-[#e2f0ff]/50 via-purple-50/30 to-white p-3.5 rounded-xl border border-[#5621bf]/20 space-y-3 shrink-0">
+      {/* ===== Main Content ===== */}
+      <main className="flex-1 flex flex-col lg:flex-row min-h-0 relative z-10">
+
+        {/* MAP (always on top on mobile, right on desktop) */}
+        <div className="w-full lg:flex-1 h-[55vh] sm:h-[50vh] lg:h-auto relative shrink-0 lg:order-2">
+          <div className="absolute inset-0 lg:static lg:h-full">
+            <div ref={mapRef} id="leaflet-map" className="w-full h-full" style={{ borderRadius: 0 }} />
+          </div>
+          {/* Map legend */}
+          <div className="absolute bottom-3 left-3 z-[400] bg-white/90 backdrop-blur-sm px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3 text-[10px] font-extrabold text-slate-700">
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#5621bf]" /> Home</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500" /> Members</span>
+          </div>
+        </div>
+
+        {/* INFO PANEL (bottom on mobile, left sidebar on desktop) */}
+        <div className="w-full lg:w-[380px] xl:w-[420px] flex flex-col min-h-0 lg:order-1 lg:border-r lg:border-slate-200/60 bg-white/70 lg:bg-white/50 backdrop-blur-sm">
+          <div className="flex-1 overflow-y-auto custom-scroll p-3 sm:p-4 space-y-3">
+
+            {/* Child status banner */}
+            {!isParent && childStatus && (
+              <div className={`p-3 rounded-xl border ${childStatus.isAtHome ? 'bg-emerald-50/90 border-emerald-200' : 'bg-amber-50/90 border-amber-200'}`}>
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-extrabold uppercase tracking-wider text-[#5621bf] flex items-center gap-1.5">
-                    <i className="fa-solid fa-house text-sm" /> Our Home Address
-                  </span>
-                  <div className="flex items-center gap-1.5">
-                    <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${homeIsSet ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>
-                      {homeIsSet ? 'Set' : 'Not Set'}
-                    </span>
-                    {isParent && (
-                      <button onClick={() => setShowSettings(!showSettings)} className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:border-[#5621bf] text-slate-700 hover:text-[#5621bf] text-xs font-extrabold transition flex items-center gap-1 shadow-sm">
-                        <i className="fa-solid fa-gear text-[#5621bf]" /> Settings
-                      </button>
-                    )}
+                  <div className="flex items-center gap-2.5">
+                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${childStatus.isAtHome ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>
+                      <i className={`fa-solid ${childStatus.isAtHome ? 'fa-house-chimney' : 'fa-route'} text-base`} />
+                    </div>
+                    <div>
+                      <p className={`text-sm font-black ${childStatus.isAtHome ? 'text-emerald-800' : 'text-slate-900'}`}>
+                        {childStatus.isAtHome ? "You're Home" : `${childStatus.travelMin} min`}
+                      </p>
+                      <p className="text-[10px] font-semibold text-slate-500">{childStatus.subtitle}</p>
+                    </div>
                   </div>
+                  {!childStatus.isAtHome && childStatus.leaveBy && (
+                    <div className="text-right">
+                      <p className="text-[9px] font-extrabold uppercase text-slate-400">Leave by</p>
+                      <p className="text-sm font-black text-amber-600">{childStatus.leaveBy}</p>
+                    </div>
+                  )}
                 </div>
+              </div>
+            )}
 
-                <div className="bg-white/90 p-3 rounded-xl border border-[#5621bf]/10 space-y-2 text-xs font-semibold text-slate-700 shadow-sm">
-                  <p className="break-words font-bold text-slate-900">{home?.home_address || 'Home address not set yet.'}</p>
-                  <div className="flex items-center justify-between text-[11px] pt-1.5 border-t border-slate-100">
-                    <span className="text-slate-500 font-extrabold">Time to be Home:</span>
-                    <span className="font-black text-[#5621bf] bg-[#5621bf]/10 px-2.5 py-0.5 rounded-lg">{home?.target_home_time || 'Not set by parent'}</span>
-                  </div>
+            {/* Tip Card (Children, once per account) */}
+            {showTip && (
+              <div className="p-2.5 rounded-xl bg-gradient-to-r from-[#5621bf]/10 via-blue-50 to-purple-50 border border-[#5621bf]/20 flex items-center gap-2.5 text-xs font-bold text-slate-700">
+                <i className="fa-solid fa-lightbulb text-amber-500 text-sm shrink-0" />
+                <span className="flex-1">Keep HOMETRACKER open while traveling so your family sees your live location.</span>
+                <button onClick={handleDismissTip} className="text-slate-400 hover:text-slate-700 p-1 transition shrink-0 cursor-pointer">
+                  <i className="fa-solid fa-xmark text-xs" />
+                </button>
+              </div>
+            )}
+
+            {/* Home info (compact) */}
+            <div className="p-3 rounded-xl bg-white/80 border border-slate-200/80 shadow-sm space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <i className="fa-solid fa-house text-[#5621bf] text-sm" />
+                  <span className="text-xs font-black text-slate-900 truncate">{home?.home_address || 'No Home set'}</span>
                 </div>
+                <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full ${homeIsSet ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>
+                  {homeIsSet ? 'Set' : 'Not Set'}
+                </span>
+              </div>
+              {home?.target_home_time && (
+                <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-500">
+                  <i className="fa-solid fa-clock text-[10px]" />
+                  <span>Curfew: <span className="font-black text-[#5621bf]">{home.target_home_time}</span></span>
+                </div>
+              )}
+            </div>
 
-                {/* Settings Drawer (Parent) */}
-                {isParent && (showSettings || !homeIsSet) && (
-                  <div className="space-y-2.5 pt-1">
-                    <div className="space-y-1">
+            {/* Settings panel (parent) */}
+            {isParent && (
+              <div className="rounded-xl bg-slate-50/90 border border-slate-200 overflow-hidden">
+                <button 
+                  onClick={() => setShowSettings(!showSettings)} 
+                  className="w-full flex items-center justify-between p-3 cursor-pointer select-none"
+                >
+                  <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                    <i className="fa-solid fa-gear text-[#5621bf]" /> Family Settings
+                  </p>
+                  <i className={`fa-solid fa-chevron-down text-slate-400 text-[10px] transition-transform duration-300 ${showSettings ? 'rotate-180 text-[#5621bf]' : ''}`} />
+                </button>
+                
+                <div ref={settingsContentRef} className="overflow-hidden" style={{ height: showSettings ? 'auto' : 0, opacity: showSettings ? 1 : 0 }}>
+                  <div className="px-3 pb-3 space-y-3">
+                    {/* Home Address */}
+                    <div className="space-y-1.5 border-t border-slate-200 pt-3">
                       <label className="block text-[10px] font-extrabold uppercase text-slate-500">Home Address</label>
                       <div className="relative">
                         <i className="fa-solid fa-location-dot absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs" />
@@ -578,132 +789,83 @@ export default function DashboardPage() {
                           placeholder="e.g. 742 Evergreen Terrace, Springfield"
                           className="w-full pl-9 pr-3 py-2 text-xs font-semibold rounded-lg border border-slate-300 focus:border-[#5621bf] outline-none bg-white" />
                       </div>
-                      <button onClick={handleSaveAddress} className="w-full py-2 bg-[#5621bf] hover:bg-[#431799] text-white font-extrabold text-xs rounded-lg shadow-sm transition active:scale-95 flex items-center justify-center gap-1.5 mt-1">
-                        <i className="fa-solid fa-floppy-disk" /> Save Home Address
+                    </div>
+                    {/* Curfew */}
+                    <div className="pt-1 space-y-1.5">
+                      <label className="block text-[10px] font-extrabold uppercase text-slate-500">Curfew Time</label>
+                      <input type="time" value={targetTime} onChange={(e) => setTargetTime(e.target.value)}
+                        className="w-full py-2 px-3 text-xs font-bold rounded-lg border border-slate-300 focus:border-[#5621bf] outline-none bg-white" />
+                    </div>
+                    {/* Save Settings Button */}
+                    <div className="pt-2">
+                      <button 
+                        onClick={handleSaveSettings} 
+                        disabled={!homeAddress.trim() || !targetTime}
+                        className={`w-full py-2.5 font-extrabold text-xs rounded-lg transition flex items-center justify-center gap-1.5 ${!homeAddress.trim() || !targetTime ? 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none' : 'bg-[#5621bf] hover:bg-[#431799] text-white active:scale-95 cursor-pointer shadow-md'}`}>
+                        <i className="fa-solid fa-floppy-disk" /> Save Family Settings
                       </button>
                     </div>
-                    <div className="pt-2 border-t border-purple-100 space-y-1">
-                      <label className="block text-[10px] font-extrabold uppercase text-slate-500">Time to be Home (Curfew)</label>
-                      <div className="flex items-center gap-2">
-                        <input type="time" value={targetTime} onChange={(e) => setTargetTime(e.target.value)}
-                          className="flex-1 py-2 px-2.5 text-xs font-bold rounded-lg border border-slate-300 bg-white outline-none" />
-                        <button onClick={handleSaveTime} className="px-3.5 py-2 bg-[#5621bf] hover:bg-[#431799] text-white text-xs font-extrabold rounded-lg transition active:scale-95 shrink-0">
-                          Save Time
-                        </button>
+                    {/* Delete Circle */}
+                    <div className="pt-3 mt-1 border-t border-rose-100 space-y-1.5">
+                      <button onClick={handleDeleteCircle} className="w-full py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 font-extrabold text-xs rounded-lg transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer border border-rose-200">
+                        <i className="fa-solid fa-trash-can" /> Delete Family Circle
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Family Members */}
+            <div className="space-y-2">
+              <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                <i className="fa-solid fa-users text-[#5621bf] text-[11px]" /> Family ({members.length})
+              </p>
+              {members.length === 0 ? (
+                <div className="p-4 text-center bg-slate-50 rounded-xl border border-slate-200/80 border-dashed text-slate-400 text-xs font-semibold">
+                  No family members found.
+                </div>
+              ) : (
+                members.map((member) => {
+                  const mp = member.role === 'parent';
+                  const status = getMemberStatus(member);
+                  return (
+                    <div key={member.id} className="flex items-center gap-2.5 p-2.5 rounded-xl bg-white/80 border border-slate-200/60 shadow-sm group">
+                      <div className={`w-8 h-8 rounded-full ${mp ? 'bg-[#5621bf]' : 'bg-blue-500'} text-white flex items-center justify-center text-[10px] font-black shrink-0`}>
+                        {(member.name || 'M').substring(0, 2).toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <h4 className="text-xs font-black text-slate-900 truncate">{member.name}</h4>
+                          <span className={`px-1.5 py-0.5 rounded text-[8px] font-extrabold ${mp ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>{member.role}</span>
+                        </div>
+                        {status.sublabel && <p className="text-[10px] font-semibold text-slate-400">{status.sublabel}</p>}
+                      </div>
+                      <div className="text-right shrink-0 flex items-center gap-2">
+                        <div className="min-w-[60px]">
+                          {status.isHome ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-extrabold">
+                              <i className="fa-solid fa-house-chimney text-[8px]" /> At Home
+                            </span>
+                          ) : (
+                            <p className={`text-xs font-extrabold ${status.color}`}>{status.label}</p>
+                          )}
+                        </div>
+                        {isParent && !mp && (
+                          <button onClick={() => handleKickMember(member)} className="w-6 h-6 rounded-md bg-slate-100 hover:bg-rose-100 text-slate-400 hover:text-rose-600 flex items-center justify-center transition-colors cursor-pointer shrink-0" title="Remove Member">
+                            <i className="fa-solid fa-xmark text-xs" />
+                          </button>
+                        )}
                       </div>
                     </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Departure Calculator (Children Only) */}
-              {!isParent && (
-                <div className="bg-amber-50/90 border border-amber-200 p-3.5 rounded-xl space-y-2 shrink-0">
-                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
-                    <i className="fa-solid fa-clock text-amber-600" /> Time to Head Home
-                  </span>
-                  <div className="grid grid-cols-2 gap-2 bg-white p-2.5 rounded-lg border border-amber-200 text-center">
-                    <div>
-                      <p className="text-[9px] font-extrabold text-slate-400 uppercase">Travel Time to Home</p>
-                      <p className="text-base font-black text-slate-900 mt-0.5">{travelTimeText}</p>
-                    </div>
-                    <div>
-                      <p className="text-[9px] font-extrabold text-slate-400 uppercase">Leave for Home By</p>
-                      <p className="text-base font-black text-amber-600 mt-0.5">{leaveByText}</p>
-                    </div>
-                  </div>
-                  <p className="text-[10px] font-semibold text-slate-500 text-center">{calcSubtitle}</p>
-                </div>
+                  );
+                })
               )}
-
-              {/* Tip Card (Children, once per account) */}
-              {showTip && (
-                <div className="bg-gradient-to-r from-[#5621bf]/10 via-blue-50 to-purple-50 p-3 rounded-xl border border-[#5621bf]/20 flex items-center justify-between gap-2 text-xs font-bold text-slate-700 shrink-0">
-                  <div className="flex items-center gap-2.5">
-                    <i className="fa-solid fa-lightbulb text-amber-500 text-base shrink-0" />
-                    <span>Keep HOMETRACKER open while traveling so your family sees your live location!</span>
-                  </div>
-                  <button onClick={handleDismissTip} className="text-slate-400 hover:text-slate-700 p-1 transition shrink-0">
-                    <i className="fa-solid fa-xmark text-sm" />
-                  </button>
-                </div>
-              )}
-
-              {/* Family Members */}
-              <div className="flex-1 flex flex-col min-h-0 space-y-2">
-                <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5 shrink-0">
-                  <i className="fa-solid fa-users text-[#5621bf]" /> Family Members
-                </h3>
-                <div className="space-y-2 flex-1 overflow-y-auto custom-scroll min-h-[120px] pr-1">
-                  {members.length === 0 ? (
-                    <div className="p-4 text-center bg-slate-50 rounded-xl border border-slate-200/80 border-dashed text-slate-400 text-xs font-semibold">
-                      No family members found in this circle.
-                    </div>
-                  ) : (
-                    members.map((member) => {
-                      const mp = member.role === 'parent';
-                      let distText = mp ? 'Home Anchor' : 'Location unknown';
-                      let travelText = '';
-                      if (!mp && member.current_lat && home?.home_lat) {
-                        const dist = calculateDistanceKm(member.current_lat, member.current_lng, home.home_lat, home.home_lng);
-                        const mins = calculateTravelTimeMins(dist);
-                        distText = `${dist.toFixed(1)} km away`;
-                        travelText = `~${mins} min travel time`;
-                      }
-                      return (
-                        <div key={member.id} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
-                          <div className="flex items-center gap-2.5">
-                            <div className={`w-8 h-8 rounded-full ${mp ? 'bg-[#5621bf]' : 'bg-blue-500'} text-white flex items-center justify-center text-xs font-black shrink-0`}>
-                              {(member.name || 'M').substring(0, 2).toUpperCase()}
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-1.5">
-                                <h4 className="text-xs font-black text-slate-900">{member.name}</h4>
-                                <span className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold ${mp ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>{member.role}</span>
-                              </div>
-                              <p className="text-[10px] font-semibold text-slate-400">{distText}</p>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-xs font-extrabold text-[#5621bf]">{travelText || '--'}</p>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-
             </div>
-          </div>
 
-          {/* RIGHT MAP */}
-          <div className="order-first lg:order-last lg:col-span-7 flex flex-col gap-3 h-[45vh] min-h-[300px] lg:min-h-0 lg:h-full relative shrink-0">
-            <div className="glass-panel rounded-2xl p-1.5 sm:p-2 shadow-[0_10px_30px_-5px_rgba(0,0,0,0.05),0_0_0_1px_#e8e8e8] flex-1 flex flex-col min-h-0 relative overflow-hidden">
-              <div className="absolute top-4 right-4 z-[400] flex items-center gap-2">
-                <button onClick={centerMapOnHome} className="px-3 py-1.5 rounded-xl bg-white/90 backdrop-blur-sm border border-slate-200 text-slate-800 text-xs font-extrabold shadow-sm hover:bg-white transition flex items-center gap-1.5">
-                  <i className="fa-solid fa-house text-[#5621bf]" /> Center Home
-                </button>
-              </div>
-              <div ref={mapRef} id="leaflet-map" />
-              <div className="absolute bottom-4 left-4 z-[400] bg-white/90 backdrop-blur-sm px-3 py-2 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3 text-[10px] font-extrabold text-slate-700">
-                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-[#5621bf]" /> Home</span>
-                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-blue-500" /> Family Members</span>
-              </div>
-            </div>
-            </div>
           </div>
         </div>
       </main>
-
-      {/* Footer */}
-      <footer className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-2 flex items-center justify-between text-[10px] font-semibold text-slate-500 border-t border-[#e8e8e8]/60 z-20 shrink-0">
-        <div>© 2026 <span className="font-extrabold text-slate-800">HOMETRACKER Inc.</span> All rights reserved.</div>
-        <div className="flex items-center gap-4">
-          <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'privacy'}))} className="hover:text-[#5621bf] transition">Privacy Policy</button>
-          <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'terms'}))} className="hover:text-[#5621bf] transition">Terms of Service</button>
-        </div>
-      </footer>
     </div>
   );
 }
