@@ -645,7 +645,7 @@ export default function DashboardPage() {
         onClick={() => setShowNotificationsMenu(!showNotificationsMenu)}
         onMouseEnter={hoverScaleIn}
         onMouseLeave={hoverScaleOut}
-        className="h-10 w-10 flex items-center justify-center rounded-2xl bg-white/90 backdrop-blur-md border border-slate-200 shadow-sm hover:shadow-md hover:border-[#5621bf]/30 transition-all duration-200 active:scale-98 cursor-pointer relative"
+        className="h-9 w-9 sm:h-10 sm:w-10 flex items-center justify-center rounded-2xl bg-white/90 backdrop-blur-md border border-slate-200 shadow-sm hover:shadow-md hover:border-[#5621bf]/30 transition-all duration-200 active:scale-98 cursor-pointer relative"
         aria-expanded={showNotificationsMenu}
         aria-haspopup="true"
       >
@@ -656,7 +656,7 @@ export default function DashboardPage() {
       </button>
 
       {/* Dropdown Menu */}
-      <div ref={notificationDropdownRef} style={{ display: 'none', opacity: 0, visibility: 'hidden' }} className="absolute right-0 mt-2 w-72 sm:w-80 bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-200/90 z-50 origin-top-right overflow-hidden flex-col max-h-[400px]">
+      <div ref={notificationDropdownRef} style={{ display: 'none', opacity: 0, visibility: 'hidden' }} className="absolute right-[-52px] sm:right-0 mt-2 w-72 sm:w-80 bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-200/90 z-50 origin-top-right overflow-hidden flex-col max-h-[400px]">
         <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
           <h3 className="text-sm font-black text-slate-900">Notifications</h3>
           {unreadNotifications.length > 0 && (
@@ -692,7 +692,7 @@ export default function DashboardPage() {
         onClick={() => setShowProfileMenu(!showProfileMenu)}
         onMouseEnter={hoverScaleIn}
         onMouseLeave={hoverScaleOut}
-        className="h-10 flex items-center gap-2 px-2 sm:px-3 rounded-2xl bg-white/90 backdrop-blur-md border border-slate-200 shadow-sm hover:shadow-md hover:border-[#5621bf]/30 transition-all duration-200 active:scale-98 cursor-pointer"
+        className="h-9 sm:h-10 flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 rounded-2xl bg-white/90 backdrop-blur-md border border-slate-200 shadow-sm hover:shadow-md hover:border-[#5621bf]/30 transition-all duration-200 active:scale-98 cursor-pointer"
         aria-expanded={showProfileMenu}
         aria-haspopup="true"
       >
@@ -910,13 +910,13 @@ export default function DashboardPage() {
 
         {/* Header */}
         <header className="absolute top-0 w-full px-3 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between z-20">
-          <Link href="/" className="flex items-center gap-2 group">
-            <Image src="/logo.png" alt="HOMETRACKER Logo" width={36} height={36} className="w-8 h-8 sm:w-9 sm:h-9 object-contain group-hover:scale-105 transition-transform duration-300" />
-            <span className="font-extrabold text-lg tracking-tight text-slate-900">
+          <Link href="/" className="flex items-center gap-1.5 sm:gap-2 group shrink-0">
+            <Image src="/logo.png" alt="HOMETRACKER Logo" width={36} height={36} className="w-7 h-7 sm:w-9 sm:h-9 object-contain group-hover:scale-105 transition-transform duration-300" />
+            <span className="font-extrabold text-sm sm:text-lg tracking-tight text-slate-900">
               HOME<span className="text-[#5621bf]">TRACKER</span>
             </span>
           </Link>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2">
             {renderNotificationDropdown()}
             {renderProfileDropdown()}
           </div>
@@ -965,19 +965,19 @@ export default function DashboardPage() {
 
       {/* ===== Header ===== */}
       <header className="w-full px-3 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between z-20 shrink-0">
-        <div className="flex items-center gap-2 sm:gap-4">
-          <Link href="/" className="flex items-center gap-2 group">
-            <Image src="/logo.png" alt="HOMETRACKER Logo" width={36} height={36} className="w-8 h-8 sm:w-9 sm:h-9 object-contain group-hover:scale-105 transition-transform duration-300" />
-            <span className="font-extrabold text-lg tracking-tight text-slate-900">
+        <div className="flex items-center gap-1.5 sm:gap-4 shrink-0">
+          <Link href="/" className="flex items-center gap-1.5 sm:gap-2 group">
+            <Image src="/logo.png" alt="HOMETRACKER Logo" width={36} height={36} className="w-7 h-7 sm:w-9 sm:h-9 object-contain group-hover:scale-105 transition-transform duration-300" />
+            <span className="font-extrabold text-sm sm:text-lg tracking-tight text-slate-900">
               HOME<span className="text-[#5621bf]">TRACKER</span>
             </span>
           </Link>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2">
           {/* Center Home button */}
           {homeIsSet && (
-            <button onClick={centerMapOnHome} onMouseEnter={hoverScaleIn} onMouseLeave={hoverScaleOut} className="h-10 px-3 rounded-xl bg-white/80 backdrop-blur-sm border border-slate-200 text-slate-700 text-xs font-bold shadow-sm hover:bg-white transition flex items-center gap-1.5 cursor-pointer">
+            <button onClick={centerMapOnHome} onMouseEnter={hoverScaleIn} onMouseLeave={hoverScaleOut} className="h-9 sm:h-10 px-2 sm:px-3 rounded-xl bg-white/80 backdrop-blur-sm border border-slate-200 text-slate-700 text-xs font-bold shadow-sm hover:bg-white transition flex items-center gap-1 sm:gap-1.5 cursor-pointer">
               <i className="fa-solid fa-house text-[#5621bf] text-[11px]" />
               <span className="hidden sm:inline">Center Home</span>
             </button>
