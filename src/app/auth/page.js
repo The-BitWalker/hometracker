@@ -262,7 +262,6 @@ export default function AuthPage() {
             <div>
               <div className="flex items-center justify-between mb-1">
                 <label className="block text-[11px] sm:text-xs font-bold uppercase tracking-wider text-slate-700">Password</label>
-                {tab === 'signin' && <button type="button" className="text-[11px] sm:text-xs font-bold text-[#5621bf] hover:underline">Forgot?</button>}
               </div>
               <div className="relative">
                 <i className="fa-solid fa-lock absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs sm:text-sm" />
