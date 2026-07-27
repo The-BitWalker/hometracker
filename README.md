@@ -1,36 +1,51 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
+# HomeTracker 
 
-## Getting Started
+HomeTracker is a premium, real-time family location-sharing and ETA prediction web application. It allows families to set up a private circle, register their home location, and monitor real-time distances and ETA calculations for circle members on an interactive map dashboard.
 
-First, run the development server:
+---
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## User Guide (For Families & End-Users)
+
+### What is HomeTracker?
+HomeTracker helps you stay connected with your loved ones. It provides a secure, private dashboard where family members can see who is at home, who is on their way, and exactly when they are expected to arrive.
+
+### Key Features
+*   **Private Family Circles:** Create a unique family group or join an existing one using a secure invite code.
+*   **Live Location Sharing:** Safely share your current coordinates with family members within your circle.
+*   **Predictive Routing & ETAs:** Automatically calculates distance (in kilometers) and keeps everyone updated on arrival times.
+*   **Instant Notifications:** Get alerts when a family member arrives home or goes offline.
+*   **Beautiful Dashboard:** Interactive live-updating map with smooth micro-animations.
+
+### Getting Started (3-Step Guide)
+1.  **Register or Sign In:** Create an account. You can choose to create a new family circle or input an invite code to join an existing one.
+2.  **Set Your Home Base:** If you are the head of the household, set the home address and target arrival times on the settings panel.
+3.  **Share & Track:** Keep the dashboard open on your device to share your GPS position and view everyone else's live status.
+
+---
+
+
+## Local Development Setup
+
+To run the application locally, follow these steps:
+
+### 1. Prerequisites
+Ensure you have **Node.js (v18+)** installed.
+
+### 2. Environment Configuration
+Create a `.env.local` file in the root directory and add:
+```env
+TURSO_DATABASE_URL="your-sqlite-or-turso-db-url"
+TURSO_AUTH_TOKEN="your-turso-auth-token"
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 3. Installation
+Install project dependencies:
+```bash
+npm install
+```
 
-You can start editing the page by modifying `app/page.js`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### 4. Running the Dev Server
+```bash
+npm run dev
+```
+Open [http://localhost:3000](http://localhost:3000) in your web browser to access the application.
