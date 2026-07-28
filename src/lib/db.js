@@ -124,13 +124,55 @@ export async function validateSession(cookieHeader) {
   }
 }
 
-// Helper: SHA-256 hash
-export async function hashPassword(password) {
+// Helper: Salted PBKDF2 password hash (100k iterations)
+export async function hashPassword(password, saltHex = null) {
+  const encoder = new TextEncoder();
+  const saltBytes = saltHex
+    ? new Uint8Array(saltHex.match(/.{1,2}/g).map((b) => parseInt(b, 16)))
+    : crypto.getRandomValues(new Uint8Array(16));
+  const newSaltHex = Array.from(saltBytes, (b) => b.toString(16).padStart(2, '0')).join('');
+
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(password),
+    { name: 'PBKDF2' },
+    false,
+    ['deriveBits']
+  );
+
+  const derivedBits = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      salt: saltBytes,
+      iterations: 100000,
+      hash: 'SHA-256',
+    },
+    keyMaterial,
+    256
+  );
+
+  const derivedHex = Array.from(new Uint8Array(derivedBits), (b) => b.toString(16).padStart(2, '0')).join('');
+  return `pbkdf2:${newSaltHex}:${derivedHex}`;
+}
+
+// Helper: Verify password with PBKDF2 (and legacy SHA-256 fallback)
+export async function verifyPassword(password, storedHash) {
+  if (!storedHash) return false;
+
+  if (storedHash.startsWith('pbkdf2:')) {
+    const parts = storedHash.split(':');
+    if (parts.length !== 3) return false;
+    const saltHex = parts[1];
+    const computedHash = await hashPassword(password, saltHex);
+    return computedHash === storedHash;
+  }
+
+  // Legacy fallback (unsalted SHA-256)
   const encoder = new TextEncoder();
   const data = encoder.encode(password);
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+  const legacyHash = Array.from(new Uint8Array(hashBuffer), (b) => b.toString(16).padStart(2, '0')).join('');
+  return legacyHash === storedHash;
 }
 
 // Helper: generate secure random token
@@ -140,12 +182,26 @@ export function generateToken() {
   return Array.from(array, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+// Helper: generate 6-character secure family code (e.g. HT-7K9M2P)
+export function generateFamilyCode() {
+  const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars[bytes[i] % chars.length];
+  }
+  return `HT-${code}`;
+}
+
 // Helper: create session token cookie header value
 export function sessionCookieHeader(token) {
-  return `ht_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`;
+  const secureFlag = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  return `ht_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${secureFlag}`;
 }
 
 // Helper: clear session cookie
 export function clearSessionCookieHeader() {
   return `ht_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
 }
+

@@ -10,6 +10,22 @@ import gsap from 'gsap';
 // ============================================================
 const AT_HOME_THRESHOLD_KM = 0.1; // 100 meters
 
+// Helper: Check if current time falls within 4-hour curfew window
+function checkIsPastCurfew(targetHomeTime) {
+  if (!targetHomeTime) return false;
+  const [curfewH, curfewM] = targetHomeTime.split(':').map(Number);
+  if (isNaN(curfewH) || isNaN(curfewM)) return false;
+  const curfewMinutes = curfewH * 60 + curfewM;
+  const now = new Date();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const windowEnd = (curfewMinutes + 4 * 60) % 1440;
+  if (curfewMinutes < windowEnd) {
+    return currentMinutes >= curfewMinutes && currentMinutes < windowEnd;
+  } else {
+    return currentMinutes >= curfewMinutes || currentMinutes < windowEnd;
+  }
+}
+
 // ============================================================
 // Utility: Haversine distance (used for quick threshold checks)
 // ============================================================
@@ -27,11 +43,11 @@ function formatFamilyCode(input) {
   if (!input) return '';
   let clean = input.toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (!clean) return '';
-  if (/^\d+$/.test(clean)) {
+  if (/^\d+$/.test(clean) || (/^[A-Z0-9]+$/.test(clean) && !clean.startsWith('HT'))) {
     clean = 'HT' + clean;
   }
   if (clean.length > 2) {
-    return clean.slice(0, 2) + '-' + clean.slice(2, 6);
+    return clean.slice(0, 2) + '-' + clean.slice(2, 8);
   }
   return clean;
 }
@@ -247,7 +263,7 @@ export default function DashboardPage() {
     try {
       const res = await fetch(`/api/directions?olat=${memberLat}&olng=${memberLng}&dlat=${homeLat}&dlng=${homeLng}`);
       const data = await res.json();
-      const entry = { distance_km: data.distance_km, duration_min: data.duration_min, timestamp: Date.now() };
+      const entry = { distance_km: data.distance_km, duration_min: data.duration_min, geometry: data.geometry, timestamp: Date.now() };
       setEtaCache((prev) => ({ ...prev, [memberId]: entry }));
       return entry;
     } catch (e) {
@@ -400,10 +416,11 @@ export default function DashboardPage() {
         const initials = (member.name || 'C').substring(0, 2).toUpperCase();
         const distKm = home?.home_lat ? calculateDistanceKm(member.current_lat, member.current_lng, home.home_lat, home.home_lng) : 999;
         const isAtHome = distKm <= AT_HOME_THRESHOLD_KM;
+        const isPastCurfew = !isAtHome && checkIsPastCurfew(home?.target_home_time);
 
         const memberIcon = L.divIcon({
           className: 'custom-pin-wrap',
-          html: `<div class="custom-map-pin ${isAtHome ? 'pin-home' : 'pin-member'} w-9 h-9"><span class="text-xs">${initials}</span></div>`,
+          html: `<div class="custom-map-pin ${isAtHome ? 'pin-home' : isPastCurfew ? 'pin-curfew' : 'pin-member'} w-9 h-9"><span class="text-xs">${initials}</span></div>`,
           iconSize: [36, 36],
           iconAnchor: [18, 18],
         });
@@ -412,6 +429,8 @@ export default function DashboardPage() {
         let popupText;
         if (isAtHome) {
           popupText = `<div class="p-1 text-center font-bold"><p class="text-xs text-slate-900">${member.name}</p><p class="text-[10px] text-emerald-600 mt-1 font-extrabold">At Home</p></div>`;
+        } else if (isPastCurfew) {
+          popupText = `<div class="p-1 text-center font-bold"><p class="text-xs text-slate-900">${member.name}</p><p class="text-[10px] text-rose-600 mt-1 font-black">⚠️ Past Curfew (${home.target_home_time})</p>${eta ? `<p class="text-[9px] text-slate-500 mt-0.5">${eta.distance_km} km &middot; ~${eta.duration_min} min</p>` : ''}</div>`;
         } else if (eta) {
           popupText = `<div class="p-1 text-center font-bold"><p class="text-xs text-slate-900">${member.name}</p><p class="text-[10px] text-[#5621bf] mt-1">${eta.distance_km} km &middot; ~${eta.duration_min} min by bike</p></div>`;
         } else {
@@ -425,9 +444,17 @@ export default function DashboardPage() {
         bounds.push([member.current_lat, member.current_lng]);
 
         if (home?.home_lat && !isAtHome) {
-          const line = L.polyline([[member.current_lat, member.current_lng], [home.home_lat, home.home_lng]], {
-            color: '#3b82f6', weight: 3, dashArray: '5, 8', opacity: 0.7,
-          }).addTo(map);
+          let line;
+          if (eta?.geometry && Array.isArray(eta.geometry) && eta.geometry.length > 0) {
+            const latLngs = eta.geometry.map((pt) => [pt[1], pt[0]]);
+            line = L.polyline(latLngs, {
+              color: '#5621bf', weight: 4, opacity: 0.8,
+            }).addTo(map);
+          } else {
+            line = L.polyline([[member.current_lat, member.current_lng], [home.home_lat, home.home_lng]], {
+              color: '#3b82f6', weight: 3, dashArray: '5, 8', opacity: 0.7,
+            }).addTo(map);
+          }
           routeLinesRef.current.push(line);
         }
       }
@@ -808,6 +835,18 @@ export default function DashboardPage() {
     }
   };
 
+  const focusMemberOnMap = (member) => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+    if (member.role === 'parent' && home?.home_lat) {
+      map.flyTo([home.home_lat, home.home_lng], 16, { duration: 1 });
+      markersRef.current.home?.openPopup();
+    } else if (member.current_lat && member.current_lng) {
+      map.flyTo([member.current_lat, member.current_lng], 16, { duration: 1 });
+      markersRef.current[member.id]?.openPopup();
+    }
+  };
+
   // ---- Child departure calculation ----
   const [currentGPS, setCurrentGPS] = useState({ lat: null, lng: null });
 
@@ -892,7 +931,19 @@ export default function DashboardPage() {
       return { label: 'At Home', color: 'text-emerald-600', badge: 'bg-emerald-100 text-emerald-700', isHome: true };
     }
 
+    const isPastCurfew = checkIsPastCurfew(home?.target_home_time);
     const eta = etaCache[member.id];
+
+    if (isPastCurfew) {
+      return {
+        label: 'Past Curfew',
+        color: 'text-rose-600',
+        sublabel: eta ? `~${eta.duration_min} min away (${eta.distance_km} km)` : `${dist.toFixed(1)} km away`,
+        badge: 'bg-rose-100 text-rose-700 font-black',
+        isPastCurfew: true,
+      };
+    }
+
     if (eta) {
       return { label: `~${eta.duration_min} min`, color: 'text-[#5621bf]', sublabel: `${eta.distance_km} km by bike`, badge: null };
     }
@@ -957,8 +1008,8 @@ export default function DashboardPage() {
                     type="text"
                     value={joinCode}
                     onChange={(e) => setJoinCode(formatFamilyCode(e.target.value))}
-                    placeholder="Enter Family Code (e.g. HT-1234)"
-                    maxLength={7}
+                    placeholder="Enter Family Code (e.g. HT-7K9M2P)"
+                    maxLength={9}
                     className="w-full py-3 px-4 text-sm font-extrabold text-center rounded-xl border border-slate-300 focus:border-[#5621bf] outline-none uppercase tracking-widest bg-white"
                   />
                 </div>
@@ -1153,7 +1204,7 @@ export default function DashboardPage() {
                   const mp = member.role === 'parent';
                   const status = getMemberStatus(member);
                   return (
-                    <div key={member.id} className="flex items-center gap-2.5 p-2.5 rounded-xl bg-white/80 border border-slate-200/60 shadow-sm group">
+                    <div key={member.id} onClick={() => focusMemberOnMap(member)} className="flex items-center gap-2.5 p-2.5 rounded-xl bg-white/80 border border-slate-200/60 shadow-sm group hover:border-[#5621bf]/40 hover:shadow-md transition-all cursor-pointer">
                       <div className={`w-8 h-8 rounded-full ${mp ? 'bg-[#5621bf]' : 'bg-blue-500'} text-white flex items-center justify-center text-[10px] font-black shrink-0`}>
                         {(member.name || 'M').substring(0, 2).toUpperCase()}
                       </div>
@@ -1170,12 +1221,16 @@ export default function DashboardPage() {
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-extrabold">
                               <i className="fa-solid fa-house-chimney text-[8px]" /> At Home
                             </span>
+                          ) : status.isPastCurfew ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 text-[10px] font-black animate-pulse">
+                              <i className="fa-solid fa-triangle-exclamation text-[8px]" /> Past Curfew
+                            </span>
                           ) : (
                             <p className={`text-xs font-extrabold ${status.color}`}>{status.label}</p>
                           )}
                         </div>
                         {isParent && !mp && (
-                          <button onClick={() => handleKickMember(member)} className="w-6 h-6 rounded-md bg-slate-100 hover:bg-rose-100 text-slate-400 hover:text-rose-600 flex items-center justify-center transition-colors cursor-pointer shrink-0" title="Remove Member">
+                          <button onClick={(e) => { e.stopPropagation(); handleKickMember(member); }} className="w-6 h-6 rounded-md bg-slate-100 hover:bg-rose-100 text-slate-400 hover:text-rose-600 flex items-center justify-center transition-colors cursor-pointer shrink-0" title="Remove Member">
                             <i className="fa-solid fa-xmark text-xs" />
                           </button>
                         )}

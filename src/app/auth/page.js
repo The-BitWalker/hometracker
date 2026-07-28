@@ -24,11 +24,11 @@ function formatFamilyCode(input) {
   if (!input) return '';
   let clean = input.toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (!clean) return '';
-  if (/^\d+$/.test(clean)) {
+  if (/^\d+$/.test(clean) || (/^[A-Z0-9]+$/.test(clean) && !clean.startsWith('HT'))) {
     clean = 'HT' + clean;
   }
   if (clean.length > 2) {
-    return clean.slice(0, 2) + '-' + clean.slice(2, 6);
+    return clean.slice(0, 2) + '-' + clean.slice(2, 8);
   }
   return clean;
 }
@@ -327,7 +327,7 @@ export default function AuthPage() {
                   <input type="text" value={familyCode}
                     onChange={(e) => setFamilyCode(formatFamilyCode(e.target.value))}
                     onBlur={validateFamilyCode}
-                    placeholder="e.g. HT-8921" maxLength={7}
+                    placeholder="e.g. HT-7K9M2P" maxLength={9}
                     className={`w-full pl-10 sm:pl-11 pr-4 py-2 rounded-xl border ${errors.familyCode ? 'border-rose-500' : 'border-[#e8e8e8] focus:border-[#5621bf]'} focus:ring-2 focus:ring-[#5621bf]/20 outline-none uppercase tracking-widest text-xs sm:text-sm font-extrabold text-slate-800 bg-white`} />
                 </div>
                 {errors.familyCode && <p className="text-[11px] font-semibold text-rose-500 mt-1">{errors.familyCode}</p>}

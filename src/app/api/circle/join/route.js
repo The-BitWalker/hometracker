@@ -32,16 +32,17 @@ export async function POST(request) {
     });
 
     const members = await db.execute({
-      sql: 'SELECT id FROM users WHERE family_code = ? AND id != ?',
-      args: [family_code.trim(), user.id],
+      sql: 'SELECT id FROM users WHERE family_code = ?',
+      args: [family_code.trim()],
     });
 
     const now = new Date().toISOString();
     for (const m of members.rows) {
       const notificationId = crypto.randomUUID();
+      const msg = m.id === user.id ? 'You have joined the family circle!' : `${user.name} has joined the family circle!`;
       await db.execute({
         sql: 'INSERT INTO notifications (id, user_id, message, is_read, created_at) VALUES (?, ?, ?, ?, ?)',
-        args: [notificationId, m.id, `${user.name} has joined the family circle!`, 0, now]
+        args: [notificationId, m.id, msg, 0, now]
       });
     }
 

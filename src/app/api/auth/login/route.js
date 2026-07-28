@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getDb, ensureSchema, hashPassword, generateToken, sessionCookieHeader } from '@/lib/db';
+import { getDb, ensureSchema, verifyPassword, hashPassword, generateToken, sessionCookieHeader } from '@/lib/db';
 
 export async function POST(request) {
   await ensureSchema();
@@ -18,15 +18,29 @@ export async function POST(request) {
     });
 
     if (res.rows.length === 0) {
-      return NextResponse.json({ error: 'No account found with this email.' }, { status: 404 });
+      return NextResponse.json({ error: 'Invalid email or password.' }, { status: 401 });
     }
 
     const user = res.rows[0];
-    const passwordHash = await hashPassword(password);
+    const isPasswordValid = await verifyPassword(password, user.password_hash);
 
-    if (user.password_hash !== passwordHash) {
-      return NextResponse.json({ error: 'Incorrect password.' }, { status: 401 });
+    if (!isPasswordValid) {
+      return NextResponse.json({ error: 'Invalid email or password.' }, { status: 401 });
     }
+
+    // Auto-upgrade legacy unsalted SHA-256 hashes to PBKDF2 on successful login
+    if (!user.password_hash.startsWith('pbkdf2:')) {
+      try {
+        const newHash = await hashPassword(password);
+        await db.execute({
+          sql: 'UPDATE users SET password_hash = ? WHERE id = ?',
+          args: [newHash, user.id],
+        });
+      } catch (upgradeErr) {
+        console.warn('Password hash auto-upgrade error:', upgradeErr);
+      }
+    }
+
 
     // Create session token
     const token = generateToken();

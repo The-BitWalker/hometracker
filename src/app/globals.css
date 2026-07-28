@@ -126,6 +126,16 @@ body {
 .pin-home { background: #5621bf; }
 .pin-member { background: #3b82f6; }
 .pin-parent { background: #6d30df; }
+.pin-curfew {
+  background: #e11d48;
+  animation: curfewPulse 2s infinite ease-in-out;
+}
+
+@keyframes curfewPulse {
+  0% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0.7); }
+  70% { box-shadow: 0 0 0 10px rgba(225, 29, 72, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0); }
+}
 
 /* ============================================================ */
 /* SCROLLABLE CARD & CUSTOM SCROLLBAR                            */

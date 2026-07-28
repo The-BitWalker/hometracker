@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getDb, ensureSchema, hashPassword, generateToken, sessionCookieHeader } from '@/lib/db';
+import { getDb, ensureSchema, hashPassword, generateToken, generateFamilyCode, sessionCookieHeader } from '@/lib/db';
 
 export async function POST(request) {
   await ensureSchema();
@@ -10,6 +10,19 @@ export async function POST(request) {
 
     if (!name || !email || !password || !role) {
       return NextResponse.json({ error: 'All fields are required.' }, { status: 400 });
+    }
+
+    if (role !== 'parent' && role !== 'child') {
+      return NextResponse.json({ error: 'Invalid account role.' }, { status: 400 });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      return NextResponse.json({ error: 'Please enter a valid email address.' }, { status: 400 });
+    }
+
+    if (password.length < 8 || !/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
+      return NextResponse.json({ error: 'Password must be at least 8 characters and contain letters and numbers.' }, { status: 400 });
     }
 
     // Check if email already exists
@@ -26,14 +39,16 @@ export async function POST(request) {
     let assignedFamilyCode = '';
 
     if (role === 'parent') {
-      // Generate unique family code
-      assignedFamilyCode = `HT-${Math.floor(1000 + Math.random() * 9000)}`;
-      const codeCheck = await db.execute({
-        sql: 'SELECT id FROM users WHERE family_code = ? AND role = ?',
-        args: [assignedFamilyCode, 'parent'],
-      });
-      if (codeCheck.rows.length > 0) {
-        assignedFamilyCode = `HT-${Math.floor(1000 + Math.random() * 9000)}`;
+      let isUnique = false;
+      while (!isUnique) {
+        assignedFamilyCode = generateFamilyCode();
+        const codeCheck = await db.execute({
+          sql: 'SELECT id FROM users WHERE family_code = ? AND role = ?',
+          args: [assignedFamilyCode, 'parent'],
+        });
+        if (codeCheck.rows.length === 0) {
+          isUnique = true;
+        }
       }
     } else {
       // Child: verify parent family code
@@ -50,8 +65,9 @@ export async function POST(request) {
       assignedFamilyCode = familyCode.trim().toUpperCase();
     }
 
-    const userId = 'usr_' + Math.random().toString(36).substring(2, 11);
+    const userId = 'usr_' + crypto.randomUUID();
     const createdAt = new Date().toISOString();
+
 
     await db.execute({
       sql: 'INSERT INTO users (id, name, email, password_hash, role, family_code, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getDb, ensureSchema, validateSession } from '@/lib/db';
+import { getDb, ensureSchema, validateSession, generateFamilyCode } from '@/lib/db';
 
 export async function POST(request) {
   await ensureSchema();
@@ -13,7 +13,7 @@ export async function POST(request) {
     let newFamilyCode = '';
     let isUnique = false;
     while (!isUnique) {
-      newFamilyCode = `HT-${Math.floor(1000 + Math.random() * 9000)}`;
+      newFamilyCode = generateFamilyCode();
       const codeCheck = await db.execute({
         sql: 'SELECT id FROM users WHERE family_code = ? AND role = ?',
         args: [newFamilyCode, 'parent'],

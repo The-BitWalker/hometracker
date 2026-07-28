@@ -25,13 +25,20 @@ export async function POST(request) {
     await db.execute({ sql: "UPDATE users SET family_code = '' WHERE id = ?", args: [userId] });
     await db.execute({ sql: 'DELETE FROM member_status WHERE user_id = ?', args: [userId] });
 
+    // Add notification for leaver
+    const selfNotifId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    await db.execute({
+      sql: 'INSERT INTO notifications (id, user_id, message, is_read, created_at) VALUES (?, ?, ?, ?, ?)',
+      args: [selfNotifId, userId, 'You have left the family circle.', 0, now]
+    });
+
     // Notify everyone else in the circle
     const remainingMembers = await db.execute({
       sql: "SELECT id FROM users WHERE family_code = ?",
       args: [familyCode]
     });
     
-    const now = new Date().toISOString();
     for (const member of remainingMembers.rows) {
       const notificationId = crypto.randomUUID();
       const message = `${userName} has left the family circle.`;

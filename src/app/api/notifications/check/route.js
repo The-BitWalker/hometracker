@@ -32,19 +32,20 @@ const CURFEW_WINDOW_HOURS = 4;
 // Helpers
 // ============================================================
 
-/** Insert a notification for every parent in the family circle */
-async function notifyParents(db, familyCode, message) {
+/** Insert a personalized notification for EVERY member in the family circle */
+async function notifyFamily(db, familyCode, targetUserId, selfMessage, otherMessage) {
   const now = new Date().toISOString();
-  const parents = await db.execute({
-    sql: `SELECT id FROM users WHERE family_code = ? AND role = 'parent'`,
+  const members = await db.execute({
+    sql: `SELECT id FROM users WHERE family_code = ?`,
     args: [familyCode],
   });
 
-  for (const parent of parents.rows) {
+  for (const member of members.rows) {
     const id = crypto.randomUUID();
+    const msg = member.id === targetUserId ? selfMessage : otherMessage;
     await db.execute({
       sql: `INSERT INTO notifications (id, user_id, message, is_read, created_at) VALUES (?, ?, ?, 0, ?)`,
-      args: [id, parent.id, message, now],
+      args: [id, member.id, msg, now],
     });
   }
 }
@@ -99,13 +100,25 @@ async function evaluateNotifications(db, member, home) {
 
   // ========== A. Leaving / Arriving Home Detection ==========
   if (state.was_at_home === 1 && !isAtHome) {
-    await notifyParents(db, member.family_code, `🚶 ${member.name} has left the home area`);
+    await notifyFamily(
+      db,
+      member.family_code,
+      member.id,
+      '🚶 You have left the home area',
+      `🚶 ${member.name} has left the home area`
+    );
     await db.execute({
       sql: `UPDATE notification_state SET was_at_home = 0 WHERE user_id = ?`,
       args: [member.id],
     });
   } else if (isAtHome && state.was_at_home === 0) {
-    await notifyParents(db, member.family_code, `🏠 ${member.name} has arrived home`);
+    await notifyFamily(
+      db,
+      member.family_code,
+      member.id,
+      '🏠 You have arrived home',
+      `🏠 ${member.name} has arrived home`
+    );
     await db.execute({
       sql: `UPDATE notification_state SET was_at_home = 1 WHERE user_id = ?`,
       args: [member.id],
@@ -123,7 +136,13 @@ async function evaluateNotifications(db, member, home) {
           const minutesStationary = (Date.now() - stationarySince.getTime()) / 60000;
 
           if (minutesStationary >= STATIONARY_MINUTES) {
-            await notifyParents(db, member.family_code, `📍 ${member.name} has been stationary for 10+ minutes`);
+            await notifyFamily(
+              db,
+              member.family_code,
+              member.id,
+              '📍 You have been stationary for 10+ minutes',
+              `📍 ${member.name} has been stationary for 10+ minutes`
+            );
             await db.execute({
               sql: `UPDATE notification_state SET stationary_notified = 1 WHERE user_id = ?`,
               args: [member.id],
@@ -169,9 +188,11 @@ async function evaluateNotifications(db, member, home) {
       isWithinCurfewWindow(currentMinutes, curfewMinutes) &&
       state.curfew_notified_date !== todayStr
     ) {
-      await notifyParents(
+      await notifyFamily(
         db,
         member.family_code,
+        member.id,
+        `⚠️ You are past curfew (${home.target_home_time}) and not home`,
         `⚠️ ${member.name} is past curfew (${home.target_home_time}) and not home`
       );
       await db.execute({
