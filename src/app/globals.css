@@ -124,6 +124,7 @@ body {
 
 .custom-map-pin:hover { transform: scale(1.15); }
 .pin-home { background: #5621bf; }
+.pin-extra { background: #0d9488; }
 .pin-member { background: #3b82f6; }
 .pin-parent { background: #6d30df; }
 .pin-curfew {

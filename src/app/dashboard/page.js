@@ -121,6 +121,101 @@ function WaveBackground() {
 }
 
 // ============================================================
+// Address Input with Autocomplete / Recommendations
+// ============================================================
+function AddressInputWithAutocomplete({ value, onChange, placeholder, className }) {
+  const [suggestions, setSuggestions] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const debounceRef = useRef(null);
+  const wrapperRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target)) {
+        setShowDropdown(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleInputChange = (e) => {
+    const newVal = e.target.value;
+    onChange(newVal);
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    if (newVal.trim().length < 3) {
+      setSuggestions([]);
+      setShowDropdown(false);
+      return;
+    }
+
+    setLoading(true);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(newVal.trim())}&limit=5`,
+          { headers: { 'User-Agent': 'HOMETRACKER/1.0' } }
+        );
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          setSuggestions(data);
+          setShowDropdown(true);
+        } else {
+          setSuggestions([]);
+          setShowDropdown(false);
+        }
+      } catch (err) {
+        console.warn('Autocomplete fetch error:', err);
+      } finally {
+        setLoading(false);
+      }
+    }, 350);
+  };
+
+  const handleSelectSuggestion = (displayName) => {
+    onChange(displayName);
+    setSuggestions([]);
+    setShowDropdown(false);
+  };
+
+  return (
+    <div className="relative w-full" ref={wrapperRef}>
+      <input
+        type="text"
+        value={value}
+        onChange={handleInputChange}
+        onFocus={() => { if (suggestions.length > 0) setShowDropdown(true); }}
+        placeholder={placeholder}
+        className={className}
+      />
+      {loading && (
+        <div className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-400">
+          <i className="fa-solid fa-spinner animate-spin" />
+        </div>
+      )}
+      {showDropdown && suggestions.length > 0 && (
+        <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl z-[999] overflow-hidden max-h-48 overflow-y-auto">
+          {suggestions.map((item, idx) => (
+            <button
+              key={idx}
+              type="button"
+              onClick={() => handleSelectSuggestion(item.display_name)}
+              className="w-full text-left px-3 py-2 text-[11px] font-semibold text-slate-700 hover:bg-purple-50 hover:text-[#5621bf] border-b border-slate-100 last:border-b-0 transition-colors flex items-start gap-2 cursor-pointer"
+            >
+              <i className="fa-solid fa-location-dot text-slate-400 text-xs mt-0.5 shrink-0" />
+              <span className="truncate">{item.display_name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
 // Dashboard Page
 // ============================================================
 export default function DashboardPage() {
@@ -140,6 +235,18 @@ export default function DashboardPage() {
   // Form state
   const [homeAddress, setHomeAddress] = useState('');
   const [targetTime, setTargetTime] = useState('');
+
+  // Extra Locations state
+  const [extraLocations, setExtraLocations] = useState([]);
+  const [newLocName, setNewLocName] = useState('');
+  const [newLocAddress, setNewLocAddress] = useState('');
+
+  // Editing location state
+  const [editingLocId, setEditingLocId] = useState(null); // 'home' or location id
+  const [editName, setEditName] = useState('');
+  const [editAddress, setEditAddress] = useState('');
+  const [editTargetTime, setEditTargetTime] = useState('');
+  const [showAddForm, setShowAddForm] = useState(false);
   
   const [notifications, setNotifications] = useState([]);
   const [showNotificationsMenu, setShowNotificationsMenu] = useState(false);
@@ -281,15 +388,17 @@ export default function DashboardPage() {
       // Await it so any newly-created notifications are picked up by the fetch below.
       await fetch('/api/notifications/check').catch(() => {});
 
-      const [homeRes, membersRes, notifRes] = await Promise.all([
+      const [homeRes, membersRes, notifRes, locRes] = await Promise.all([
         fetch('/api/circle/home').then((r) => r.json()),
         fetch('/api/circle/members').then((r) => r.json()),
         fetch('/api/notifications').then((r) => r.json()),
+        fetch('/api/circle/locations').then((r) => r.json()),
       ]);
 
       if (homeRes.home) setHome(homeRes.home);
       if (membersRes.members) setMembers(membersRes.members);
       if (notifRes.notifications) setNotifications(notifRes.notifications);
+      if (locRes.locations) setExtraLocations(locRes.locations);
     } catch (e) {
       console.error('Refresh error:', e);
     }
@@ -410,6 +519,23 @@ export default function DashboardPage() {
       bounds.push([home.home_lat, home.home_lng]);
     }
 
+    // Extra locations markers
+    extraLocations.forEach((loc) => {
+      if (loc.lat && loc.lng) {
+        const extraIcon = L.divIcon({
+          className: 'custom-pin-wrap',
+          html: '<div class="custom-map-pin pin-extra w-9 h-9"><i class="fa-solid fa-location-dot text-base"></i></div>',
+          iconSize: [36, 36],
+          iconAnchor: [18, 18],
+        });
+        const marker = L.marker([loc.lat, loc.lng], { icon: extraIcon })
+          .bindPopup(`<div class="p-1 font-bold text-center"><p class="text-xs text-teal-800"><i class="fa-solid fa-location-dot text-sm"></i> ${loc.name}</p><p class="text-[10px] text-slate-500">${loc.address}</p></div>`)
+          .addTo(map);
+        markersRef.current[`loc_${loc.id}`] = marker;
+        bounds.push([loc.lat, loc.lng]);
+      }
+    });
+
     // Member markers (children only)
     members.forEach((member) => {
       if (member.role === 'child' && member.current_lat && member.current_lng) {
@@ -426,9 +552,15 @@ export default function DashboardPage() {
         });
 
         const eta = etaCache[member.id];
+        const extraLoc = extraLocations.find(
+          (loc) => loc.lat && loc.lng && calculateDistanceKm(member.current_lat, member.current_lng, loc.lat, loc.lng) <= AT_HOME_THRESHOLD_KM
+        );
+
         let popupText;
         if (isAtHome) {
           popupText = `<div class="p-1 text-center font-bold"><p class="text-xs text-slate-900">${member.name}</p><p class="text-[10px] text-emerald-600 mt-1 font-extrabold">At Home</p></div>`;
+        } else if (extraLoc) {
+          popupText = `<div class="p-1 text-center font-bold"><p class="text-xs text-slate-900">${member.name}</p><p class="text-[10px] text-amber-600 mt-1 font-extrabold">📍 At ${extraLoc.name}</p>${eta ? `<p class="text-[9px] text-slate-500 mt-0.5">${eta.distance_km} km from Home &middot; ~${eta.duration_min} min</p>` : `<p class="text-[9px] text-slate-500 mt-0.5">${distKm.toFixed(1)} km from Home</p>`}</div>`;
         } else if (isPastCurfew) {
           popupText = `<div class="p-1 text-center font-bold"><p class="text-xs text-slate-900">${member.name}</p><p class="text-[10px] text-rose-600 mt-1 font-black">⚠️ Past Curfew (${home.target_home_time})</p>${eta ? `<p class="text-[9px] text-slate-500 mt-0.5">${eta.distance_km} km &middot; ~${eta.duration_min} min</p>` : ''}</div>`;
         } else if (eta) {
@@ -462,7 +594,7 @@ export default function DashboardPage() {
 
     if (bounds.length > 1) map.fitBounds(bounds, { padding: [50, 50] });
     else if (bounds.length === 1) map.setView(bounds[0], 14);
-  }, [home, members, etaCache]);
+  }, [home, members, extraLocations, etaCache]);
 
   // ---- Actions ----
   const handleSignOut = async () => {
@@ -591,6 +723,126 @@ export default function DashboardPage() {
         await refreshData();
       } else {
         setModal({ type: 'error', title: 'Error', message: data.error || 'Failed to save settings.' });
+      }
+    } catch (e) {
+      setModal({ type: 'error', title: 'Error', message: e.message });
+    }
+  };
+
+  const handleAddLocation = async () => {
+    if (!newLocName.trim() || !newLocAddress.trim()) {
+      setModal({ type: 'warning', title: 'Incomplete', message: 'Please enter both a location name and address.' });
+      return;
+    }
+
+    const totalSavedCount = (homeIsSet ? 1 : 0) + extraLocations.length;
+    if (totalSavedCount >= 2) {
+      setModal({ type: 'warning', title: 'Limit Reached', message: 'Maximum of 2 locations (including Home) allowed.' });
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/circle/locations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newLocName.trim(), address: newLocAddress.trim() }),
+      });
+      const data = await res.json();
+
+      if (res.ok) {
+        setModal({ type: 'success', title: 'Location Added', message: `Added "${newLocName.trim()}" to saved locations.` });
+        setNewLocName('');
+        setNewLocAddress('');
+        await refreshData();
+      } else {
+        setModal({ type: 'error', title: 'Error', message: data.error || 'Failed to add location.' });
+      }
+    } catch (e) {
+      setModal({ type: 'error', title: 'Error', message: e.message });
+    }
+  };
+
+  const handleDeleteLocation = (loc) => {
+    setModal({
+      type: 'warning',
+      title: 'Remove Location?',
+      message: `Are you sure you want to remove "${loc.name}"?`,
+      confirmText: 'Remove Location',
+      onConfirm: async () => {
+        try {
+          const res = await fetch('/api/circle/locations', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: loc.id }),
+          });
+          if (res.ok) {
+            await refreshData();
+          } else {
+            setModal({ type: 'error', title: 'Error', message: 'Failed to remove location.' });
+          }
+        } catch (e) {
+          setModal({ type: 'error', title: 'Error', message: e.message });
+        }
+      },
+    });
+  };
+
+  const flyToLocation = (lat, lng, markerKey) => {
+    if (lat && lng && mapInstanceRef.current) {
+      mapInstanceRef.current.flyTo([lat, lng], 15, { duration: 1 });
+      if (markerKey && markersRef.current[markerKey]) {
+        markersRef.current[markerKey].openPopup();
+      }
+    }
+  };
+
+  const startEditLocation = (locId, currentName, currentAddress, currentCurfew) => {
+    setEditingLocId(locId);
+    setEditName(currentName || '');
+    setEditAddress(currentAddress || '');
+    setEditTargetTime(currentCurfew || home?.target_home_time || '20:00');
+  };
+
+  const handleSaveLocationEdit = async (locId) => {
+    if (!editAddress.trim()) {
+      setModal({ type: 'warning', title: 'Incomplete', message: 'Address cannot be empty.' });
+      return;
+    }
+
+    try {
+      if (locId === 'home') {
+        const res = await fetch('/api/circle/home', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            home_address: editAddress.trim(),
+            target_home_time: editTargetTime || '20:00',
+          }),
+        });
+        if (res.ok) {
+          setEditingLocId(null);
+          setModal({ type: 'success', title: 'Home Base Updated', message: 'Home address and curfew time updated successfully.' });
+          await refreshData();
+        } else {
+          setModal({ type: 'error', title: 'Error', message: 'Failed to update Home Base.' });
+        }
+      } else {
+        if (!editName.trim()) {
+          setModal({ type: 'warning', title: 'Incomplete', message: 'Location name cannot be empty.' });
+          return;
+        }
+        const res = await fetch('/api/circle/locations', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: locId, name: editName.trim(), address: editAddress.trim() }),
+        });
+        if (res.ok) {
+          setEditingLocId(null);
+          setModal({ type: 'success', title: 'Location Updated', message: 'Location address updated successfully.' });
+          await refreshData();
+        } else {
+          setModal({ type: 'error', title: 'Error', message: 'Failed to update location.' });
+        }
       }
     } catch (e) {
       setModal({ type: 'error', title: 'Error', message: e.message });
@@ -795,6 +1047,20 @@ export default function DashboardPage() {
                 <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
               </button>
             )}
+            {isParent && user?.family_code && (
+              <button
+                onClick={handleDeleteCircle}
+                onMouseEnter={hoverScaleIn}
+                onMouseLeave={hoverScaleOut}
+                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-700 font-extrabold text-xs transition-colors duration-150 group cursor-pointer mb-1"
+              >
+                <span className="flex items-center gap-2">
+                  <i className="fa-solid fa-users-slash text-sm group-hover:-translate-x-0.5 transition-transform" />
+                  Disband Family Circle
+                </span>
+                <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
+              </button>
+            )}
             <button
               onClick={handleSignOut}
               onMouseEnter={hoverScaleIn}
@@ -877,22 +1143,55 @@ export default function DashboardPage() {
     const isAtHome = dist <= AT_HOME_THRESHOLD_KM;
     const selfEta = etaCache['self'];
 
+    const extraLoc = extraLocations.find(
+      (loc) => loc.lat && loc.lng && calculateDistanceKm(currentGPS.lat, currentGPS.lng, loc.lat, loc.lng) <= AT_HOME_THRESHOLD_KM
+    );
+
     if (isAtHome) {
       childStatus = { isAtHome: true, text: "You're Home", subtitle: 'You are within range of your Home Base.' };
-    } else if (selfEta) {
+    } else {
       let leaveByText = '';
-      let subtitle = `${selfEta.distance_km} km from Home by bike (~${selfEta.duration_min} min).`;
+      const travelMins = selfEta ? selfEta.duration_min : Math.max(2, Math.ceil(((dist * 1.4) / 12) * 60 + 2));
+      const distText = selfEta ? selfEta.distance_km : dist.toFixed(1);
+
+      let subtitle = extraLoc
+        ? `You are at ${extraLoc.name}. ~${travelMins} min travel (${distText} km from Home).`
+        : `${distText} km from Home (~${travelMins} min travel).`;
+
       if (home.target_home_time) {
         const [tH, tM] = home.target_home_time.split(':').map(Number);
-        const targetDate = new Date();
-        targetDate.setHours(tH, tM, 0, 0);
-        const leaveDate = new Date(targetDate.getTime() - selfEta.duration_min * 60000);
-        leaveByText = `${String(leaveDate.getHours()).padStart(2, '0')}:${String(leaveDate.getMinutes()).padStart(2, '0')}`;
-        subtitle = `Leave by ${leaveByText} to arrive by ${home.target_home_time}.`;
+        const isPastCurfewNow = checkIsPastCurfew(home.target_home_time);
+
+        if (isPastCurfewNow) {
+          leaveByText = 'IMMEDIATELY';
+          subtitle = `⚠️ Past Curfew (${home.target_home_time})! ${extraLoc ? `You are at ${extraLoc.name}, ` : ''}${distText} km away (~${travelMins} min). Leave immediately!`;
+        } else {
+          // Target curfew is later today
+          const curfewDate = new Date();
+          curfewDate.setHours(tH, tM, 0, 0);
+          const leaveTimestamp = curfewDate.getTime() - travelMins * 60000;
+
+          if (Date.now() >= leaveTimestamp) {
+            leaveByText = 'NOW';
+            subtitle = `🚨 Leave NOW to arrive on time for your ${home.target_home_time} curfew! (${distText} km away)`;
+          } else {
+            const leaveDate = new Date(leaveTimestamp);
+            const lH = String(leaveDate.getHours()).padStart(2, '0');
+            const lM = String(leaveDate.getMinutes()).padStart(2, '0');
+            leaveByText = `${lH}:${lM}`;
+            subtitle = `${extraLoc ? `You are at ${extraLoc.name}. ` : ''}Leave by ${leaveByText} to arrive on time for ${home.target_home_time} curfew (${distText} km away).`;
+          }
+        }
       }
-      childStatus = { isAtHome: false, travelMin: selfEta.duration_min, leaveBy: leaveByText, subtitle, distKm: selfEta.distance_km };
-    } else {
-      childStatus = { isAtHome: false, travelMin: '--', leaveBy: '', subtitle: `${dist.toFixed(1)} km from Home. Calculating route...`, distKm: dist.toFixed(1) };
+      childStatus = {
+        isAtHome: false,
+        isAtExtraLocation: !!extraLoc,
+        extraLocName: extraLoc?.name,
+        travelMin: travelMins,
+        leaveBy: leaveByText,
+        subtitle,
+        distKm: distText,
+      };
     }
   } else if (user?.role === 'child') {
     childStatus = { isAtHome: false, travelMin: '--', leaveBy: '', subtitle: home?.home_lat ? 'Waiting for GPS signal...' : 'Waiting for parent to set Home Base.', distKm: '--' };
@@ -920,6 +1219,7 @@ export default function DashboardPage() {
 
   const isParent = user?.role === 'parent';
   const homeIsSet = home?.home_address;
+  const totalSavedLocations = (homeIsSet ? 1 : 0) + extraLocations.length;
 
   // ---- Helper: get member status info ----
   const getMemberStatus = (member) => {
@@ -931,8 +1231,24 @@ export default function DashboardPage() {
       return { label: 'At Home', color: 'text-emerald-600', badge: 'bg-emerald-100 text-emerald-700', isHome: true };
     }
 
+    // Check if at an extra saved location
+    const extraLoc = extraLocations.find(
+      (loc) => loc.lat && loc.lng && calculateDistanceKm(member.current_lat, member.current_lng, loc.lat, loc.lng) <= AT_HOME_THRESHOLD_KM
+    );
+
     const isPastCurfew = checkIsPastCurfew(home?.target_home_time);
     const eta = etaCache[member.id];
+
+    if (extraLoc) {
+      return {
+        label: `At ${extraLoc.name}`,
+        color: 'text-amber-600',
+        sublabel: eta ? `~${eta.duration_min} min from Home (${eta.distance_km} km)` : `${dist.toFixed(1)} km from Home`,
+        badge: 'bg-amber-100 text-amber-800 font-extrabold border border-amber-200/60',
+        isExtraLocation: true,
+        locationName: extraLoc.name,
+      };
+    }
 
     if (isPastCurfew) {
       return {
@@ -1076,6 +1392,7 @@ export default function DashboardPage() {
           {/* Map legend */}
           <div className="absolute bottom-3 left-3 z-[400] bg-white/90 backdrop-blur-sm px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3 text-[10px] font-extrabold text-slate-700">
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#5621bf]" /> Home</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#0d9488]" /> Extra</span>
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500" /> Members</span>
           </div>
         </div>
@@ -1120,75 +1437,206 @@ export default function DashboardPage() {
               </div>
             )}
 
-            {/* Home info (compact) */}
-            <div className="p-3 rounded-xl bg-white/80 border border-slate-200/80 shadow-sm space-y-2">
+            {/* Saved Family Locations */}
+            <div className="p-3 rounded-xl bg-white/80 border border-slate-200/80 shadow-sm space-y-2.5">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <i className="fa-solid fa-house text-[#5621bf] text-sm" />
-                  <span className="text-xs font-black text-slate-900 truncate">{home?.home_address || 'No Home set'}</span>
-                </div>
-                <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full ${homeIsSet ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>
-                  {homeIsSet ? 'Set' : 'Not Set'}
+                <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                  <i className="fa-solid fa-map-location-dot text-[#5621bf]" /> Saved Locations
+                </p>
+                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${totalSavedLocations >= 2 ? 'bg-amber-100 text-amber-800' : 'bg-purple-100 text-[#5621bf]'}`}>
+                  {totalSavedLocations} / 2 Locations
                 </span>
               </div>
-              {home?.target_home_time && (
-                <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-500">
-                  <i className="fa-solid fa-clock text-[10px]" />
-                  <span>Curfew: <span className="font-black text-[#5621bf]">{home.target_home_time}</span></span>
+
+              <div className="space-y-2">
+                {/* Home Location */}
+                <div className="p-2.5 rounded-xl bg-purple-50/70 border border-purple-100/90 transition shadow-xs">
+                  {editingLocId === 'home' ? (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black uppercase text-purple-900">Edit Home Base & Curfew</span>
+                        <button onClick={() => setEditingLocId(null)} className="text-[10px] font-bold text-slate-400 hover:text-slate-600 cursor-pointer">Cancel</button>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black uppercase text-slate-400">Home Address</label>
+                        <AddressInputWithAutocomplete
+                          value={editAddress}
+                          onChange={setEditAddress}
+                          placeholder="Search or enter Home Address"
+                          className="w-full px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-purple-300 focus:border-[#5621bf] outline-none bg-white"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black uppercase text-slate-400">Curfew Time</label>
+                        <input 
+                          type="time" 
+                          value={editTargetTime} 
+                          onChange={(e) => setEditTargetTime(e.target.value)}
+                          className="w-full px-2.5 py-1.5 text-xs font-bold rounded-lg border border-purple-300 focus:border-[#5621bf] outline-none bg-white"
+                        />
+                      </div>
+                      <div className="flex justify-end gap-1.5 pt-1">
+                        <button 
+                          onClick={() => handleSaveLocationEdit('home')}
+                          className="px-3 py-1.5 bg-[#5621bf] hover:bg-[#431799] text-white text-xs font-extrabold rounded-lg shadow-sm cursor-pointer"
+                        >
+                          Save Home Base
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between">
+                      <div 
+                        onClick={() => flyToLocation(home?.home_lat, home?.home_lng, 'home')}
+                        className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer"
+                      >
+                        <div className="w-8 h-8 rounded-lg bg-[#5621bf] text-white flex items-center justify-center text-xs shrink-0 shadow-sm">
+                          <i className="fa-solid fa-house" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-xs font-black text-slate-900 truncate">Home Base</p>
+                            <span className="text-[8px] font-extrabold px-1.5 py-0.2 rounded bg-purple-100 text-purple-700">Primary</span>
+                          </div>
+                          <p className="text-[10px] font-semibold text-slate-500 truncate">{home?.home_address || 'Click edit to set address'}</p>
+                          <p className="text-[9px] font-extrabold text-[#5621bf] mt-0.5 flex items-center gap-1">
+                            <i className="fa-solid fa-clock text-[8px]" /> Curfew: {home?.target_home_time || 'Not set'}
+                          </p>
+                        </div>
+                      </div>
+                      {isParent && (
+                        <div className="relative group/hint shrink-0 ml-1">
+                          <button 
+                            onClick={() => startEditLocation('home', 'Home Base', home?.home_address, home?.target_home_time)}
+                            className="w-7 h-7 rounded-lg hover:bg-purple-200/50 text-slate-400 hover:text-[#5621bf] flex items-center justify-center transition cursor-pointer"
+                            title="Edit Home Address & Curfew Time"
+                          >
+                            <i className="fa-solid fa-pen-to-square text-xs" />
+                          </button>
+                          <div className="absolute right-0 bottom-full mb-1 hidden group-hover/hint:block whitespace-nowrap bg-slate-900 text-white text-[9px] font-extrabold px-2 py-1 rounded-md shadow-lg z-20 pointer-events-none">
+                            Edit Home Address & Curfew Time
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Extra Locations */}
+                {extraLocations.map((loc) => (
+                  <div key={loc.id} className="p-2.5 rounded-xl bg-teal-50/70 border border-teal-100/90 transition shadow-xs">
+                    {editingLocId === loc.id ? (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-black uppercase text-teal-900">Edit Location</span>
+                          <button onClick={() => setEditingLocId(null)} className="text-[10px] font-bold text-slate-400 hover:text-slate-600 cursor-pointer">Cancel</button>
+                        </div>
+                        <input 
+                          type="text" 
+                          value={editName} 
+                          onChange={(e) => setEditName(e.target.value)}
+                          placeholder="Location Name (e.g. School)"
+                          className="w-full px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-teal-300 focus:border-[#0d9488] outline-none bg-white"
+                        />
+                        <AddressInputWithAutocomplete
+                          value={editAddress}
+                          onChange={setEditAddress}
+                          placeholder="Search or enter Address"
+                          className="w-full px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-teal-300 focus:border-[#0d9488] outline-none bg-white"
+                        />
+                        <div className="flex justify-end gap-1.5">
+                          <button 
+                            onClick={() => handleSaveLocationEdit(loc.id)}
+                            className="px-3 py-1 bg-[#0d9488] hover:bg-[#0f766e] text-white text-xs font-extrabold rounded-lg shadow-sm cursor-pointer"
+                          >
+                            Save Changes
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between">
+                        <div 
+                          onClick={() => flyToLocation(loc.lat, loc.lng, `loc_${loc.id}`)}
+                          className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer"
+                        >
+                          <div className="w-8 h-8 rounded-lg bg-[#0d9488] text-white flex items-center justify-center text-xs shrink-0 shadow-sm">
+                            <i className="fa-solid fa-location-dot" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-black text-slate-900 truncate">{loc.name}</p>
+                            <p className="text-[10px] font-semibold text-slate-500 truncate">{loc.address}</p>
+                          </div>
+                        </div>
+                        {isParent && (
+                          <div className="flex items-center gap-1 shrink-0 ml-1">
+                            <div className="relative group/hint">
+                              <button 
+                                onClick={() => startEditLocation(loc.id, loc.name, loc.address)}
+                                className="w-7 h-7 rounded-lg hover:bg-teal-200/50 text-slate-400 hover:text-[#0d9488] flex items-center justify-center transition cursor-pointer"
+                                title="Change Address"
+                              >
+                                <i className="fa-solid fa-pen-to-square text-xs" />
+                              </button>
+                              <div className="absolute right-0 bottom-full mb-1 hidden group-hover/hint:block whitespace-nowrap bg-slate-900 text-white text-[9px] font-extrabold px-2 py-1 rounded-md shadow-lg z-20 pointer-events-none">
+                                Change Address
+                              </div>
+                            </div>
+                            <button 
+                              onClick={() => handleDeleteLocation(loc)}
+                              className="w-7 h-7 rounded-lg hover:bg-rose-100 text-slate-400 hover:text-rose-600 flex items-center justify-center transition cursor-pointer"
+                              title="Remove location"
+                            >
+                              <i className="fa-solid fa-trash-can text-xs" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Add Location Form (Parent Only - only if under limit of 2) */}
+              {isParent && totalSavedLocations < 2 && (
+                <div className="pt-2 border-t border-slate-100 space-y-2">
+                  {showAddForm ? (
+                    <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black uppercase text-slate-600">Add Extra Location</span>
+                        <button onClick={() => setShowAddForm(false)} className="text-[10px] font-bold text-slate-400 hover:text-slate-600 cursor-pointer">Cancel</button>
+                      </div>
+                      <input 
+                        type="text" 
+                        value={newLocName} 
+                        onChange={(e) => setNewLocName(e.target.value)}
+                        placeholder="Name (e.g. School, Work, Gym)"
+                        className="w-full px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 focus:border-[#0d9488] outline-none bg-white"
+                      />
+                      <AddressInputWithAutocomplete
+                        value={newLocAddress}
+                        onChange={setNewLocAddress}
+                        placeholder="Search or enter Address (e.g. 100 Main St)"
+                        className="w-full px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 focus:border-[#0d9488] outline-none bg-white"
+                      />
+                      <button
+                        onClick={() => { handleAddLocation(); setShowAddForm(false); }}
+                        disabled={!newLocName.trim() || !newLocAddress.trim()}
+                        className={`w-full py-2 font-extrabold text-xs rounded-lg transition flex items-center justify-center gap-1.5 ${!newLocName.trim() || !newLocAddress.trim() ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-[#0d9488] hover:bg-[#0f766e] text-white active:scale-95 cursor-pointer shadow-sm'}`}
+                      >
+                        <i className="fa-solid fa-plus" /> Save New Location
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setShowAddForm(true)}
+                      className="w-full py-2 border border-dashed border-teal-300 hover:border-teal-500 bg-teal-50/50 hover:bg-teal-50 text-[#0d9488] font-extrabold text-xs rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <i className="fa-solid fa-plus" /> Add Location (e.g. School)
+                    </button>
+                  )}
                 </div>
               )}
             </div>
-
-            {/* Settings panel (parent) */}
-            {isParent && (
-              <div className="rounded-xl bg-slate-50/90 border border-slate-200 overflow-hidden">
-                <button 
-                  onClick={() => setShowSettings(!showSettings)} 
-                  className="w-full flex items-center justify-between p-3 cursor-pointer select-none"
-                >
-                  <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                    <i className="fa-solid fa-gear text-[#5621bf]" /> Family Settings
-                  </p>
-                  <i className={`fa-solid fa-chevron-down text-slate-400 text-[10px] transition-transform duration-300 ${showSettings ? 'rotate-180 text-[#5621bf]' : ''}`} />
-                </button>
-                
-                <div ref={settingsContentRef} className="overflow-hidden" style={{ height: showSettings ? 'auto' : 0, opacity: showSettings ? 1 : 0 }}>
-                  <div className="px-3 pb-3 space-y-3">
-                    {/* Home Address */}
-                    <div className="space-y-1.5 border-t border-slate-200 pt-3">
-                      <label className="block text-[10px] font-extrabold uppercase text-slate-500">Home Address</label>
-                      <div className="relative">
-                        <i className="fa-solid fa-location-dot absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs" />
-                        <input type="text" value={homeAddress} onChange={(e) => setHomeAddress(e.target.value)}
-                          placeholder="e.g. 742 Evergreen Terrace, Springfield"
-                          className="w-full pl-9 pr-3 py-2 text-xs font-semibold rounded-lg border border-slate-300 focus:border-[#5621bf] outline-none bg-white" />
-                      </div>
-                    </div>
-                    {/* Curfew */}
-                    <div className="pt-1 space-y-1.5">
-                      <label className="block text-[10px] font-extrabold uppercase text-slate-500">Curfew Time</label>
-                      <input type="time" value={targetTime} onChange={(e) => setTargetTime(e.target.value)}
-                        className="w-full py-2 px-3 text-xs font-bold rounded-lg border border-slate-300 focus:border-[#5621bf] outline-none bg-white" />
-                    </div>
-                    {/* Save Settings Button */}
-                    <div className="pt-2">
-                      <button 
-                        onClick={handleSaveSettings} 
-                        disabled={!homeAddress.trim() || !targetTime}
-                        className={`w-full py-2.5 font-extrabold text-xs rounded-lg transition flex items-center justify-center gap-1.5 ${!homeAddress.trim() || !targetTime ? 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none' : 'bg-[#5621bf] hover:bg-[#431799] text-white active:scale-95 cursor-pointer shadow-md'}`}>
-                        <i className="fa-solid fa-floppy-disk" /> Save Family Settings
-                      </button>
-                    </div>
-                    {/* Delete Circle */}
-                    <div className="pt-3 mt-1 border-t border-rose-100 space-y-1.5">
-                      <button onClick={handleDeleteCircle} className="w-full py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 font-extrabold text-xs rounded-lg transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer border border-rose-200">
-                        <i className="fa-solid fa-trash-can" /> Delete Family Circle
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
 
             {/* Family Members */}
             <div className="space-y-2">
@@ -1220,6 +1668,10 @@ export default function DashboardPage() {
                           {status.isHome ? (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-extrabold">
                               <i className="fa-solid fa-house-chimney text-[8px]" /> At Home
+                            </span>
+                          ) : status.isExtraLocation ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-extrabold border border-amber-200/60">
+                              <i className="fa-solid fa-location-dot text-[8px] text-amber-600" /> {status.label}
                             </span>
                           ) : status.isPastCurfew ? (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 text-[10px] font-black animate-pulse">

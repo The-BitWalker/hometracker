@@ -79,7 +79,7 @@ function isWithinCurfewWindow(currentMinutes, curfewMinutes) {
  * Run notification checks for a single child member.
  * Called both from the child's location push AND from the parent's poll.
  */
-async function evaluateNotifications(db, member, home) {
+async function evaluateNotifications(db, member, home, extraLocations = []) {
   const lat = member.current_lat;
   const lng = member.current_lng;
   if (lat == null || lng == null) return;
@@ -95,38 +95,70 @@ async function evaluateNotifications(db, member, home) {
   const state = stateRes.rows[0];
   if (!state) return;
 
-  const distFromHome = distanceKm(lat, lng, home.home_lat, home.home_lng);
-  const isAtHome = distFromHome <= HOME_THRESHOLD_KM;
+  // Build complete list of saved locations
+  const allLocations = [
+    { name: 'Home', lat: home.home_lat, lng: home.home_lng, isHome: true },
+    ...extraLocations.map((loc) => ({ name: loc.name, lat: loc.lat, lng: loc.lng, isHome: false })),
+  ];
 
-  // ========== A. Leaving / Arriving Home Detection ==========
-  if (state.was_at_home === 1 && !isAtHome) {
+  // Find if member is currently near any saved location
+  let currentNearLocation = null;
+  for (const loc of allLocations) {
+    if (loc.lat != null && loc.lng != null) {
+      const d = distanceKm(lat, lng, loc.lat, loc.lng);
+      if (d <= HOME_THRESHOLD_KM) {
+        currentNearLocation = loc;
+        break;
+      }
+    }
+  }
+
+  // Current location name (or null if not at any saved location)
+  const currentLocName = currentNearLocation ? currentNearLocation.name : null;
+
+  // Previous location name stored in DB (backward compatibility fallback with was_at_home)
+  let prevLocName = state.current_location_name;
+  if (prevLocName === undefined || prevLocName === null) {
+    prevLocName = state.was_at_home === 1 ? 'Home' : null;
+  }
+
+  // ========== A. Leaving / Arriving Location Detection ==========
+  if (prevLocName && prevLocName !== currentLocName) {
+    // Member left previous location
+    const icon = prevLocName === 'Home' ? '🏠' : '📍';
     await notifyFamily(
       db,
       member.family_code,
       member.id,
-      '🚶 You have left the home area',
-      `🚶 ${member.name} has left the home area`
+      `🚶 You have left ${prevLocName}`,
+      `🚶 ${member.name} has left ${prevLocName}`
     );
-    await db.execute({
-      sql: `UPDATE notification_state SET was_at_home = 0 WHERE user_id = ?`,
-      args: [member.id],
-    });
-  } else if (isAtHome && state.was_at_home === 0) {
+  }
+
+  if (currentLocName && currentLocName !== prevLocName) {
+    // Member arrived at new location
+    const icon = currentLocName === 'Home' ? '🏠' : '📍';
     await notifyFamily(
       db,
       member.family_code,
       member.id,
-      '🏠 You have arrived home',
-      `🏠 ${member.name} has arrived home`
+      `${icon} You have arrived at ${currentLocName}`,
+      `${icon} ${member.name} has arrived at ${currentLocName}`
     );
+  }
+
+  if (prevLocName !== currentLocName) {
+    const isAtHomeInt = currentLocName === 'Home' ? 1 : 0;
     await db.execute({
-      sql: `UPDATE notification_state SET was_at_home = 1 WHERE user_id = ?`,
-      args: [member.id],
+      sql: `UPDATE notification_state SET was_at_home = ?, current_location_name = ? WHERE user_id = ?`,
+      args: [isAtHomeInt, currentLocName, member.id],
     });
   }
 
+  const isAtHome = currentLocName === 'Home';
+
   // ========== B. Stationary Detection (10+ minutes, outside home only) ==========
-  if (!isAtHome) {
+  if (!currentLocName) {
     if (state.stationary_lat != null && state.stationary_lng != null) {
       const distFromStationary = distanceKm(lat, lng, state.stationary_lat, state.stationary_lng);
 
@@ -158,7 +190,7 @@ async function evaluateNotifications(db, member, home) {
         });
       }
     } else {
-      // First check outside home — initialise stationary tracking
+      // First check outside saved location — initialise stationary tracking
       const now = new Date().toISOString();
       await db.execute({
         sql: `UPDATE notification_state SET stationary_lat = ?, stationary_lng = ?, stationary_since = ?, stationary_notified = 0 WHERE user_id = ?`,
@@ -166,7 +198,7 @@ async function evaluateNotifications(db, member, home) {
       });
     }
   } else {
-    // Member is at home — clear stationary tracking
+    // Member is at a saved location — clear stationary tracking
     if (state.stationary_lat != null) {
       await db.execute({
         sql: `UPDATE notification_state SET stationary_lat = NULL, stationary_lng = NULL, stationary_since = NULL, stationary_notified = 0 WHERE user_id = ?`,
@@ -209,8 +241,6 @@ export { evaluateNotifications, distanceKm, HOME_THRESHOLD_KM };
 // ============================================================
 // GET handler — called by the dashboard poll to evaluate
 // notification checks for ALL child members in the family.
-// This ensures notifications fire even when the child's browser
-// is closed or GPS is unavailable.
 // ============================================================
 export async function GET(request) {
   await ensureSchema();
@@ -232,6 +262,13 @@ export async function GET(request) {
       return NextResponse.json({ checked: false, reason: 'no_home' });
     }
 
+    // Fetch extra locations for this family
+    const locRes = await db.execute({
+      sql: `SELECT id, name, address, lat, lng FROM family_locations WHERE family_code = ?`,
+      args: [user.family_code],
+    });
+    const extraLocations = locRes.rows;
+
     // Fetch all child members with their latest location
     const membersRes = await db.execute({
       sql: `SELECT users.id, users.name, users.family_code,
@@ -244,7 +281,7 @@ export async function GET(request) {
 
     for (const member of membersRes.rows) {
       if (member.current_lat != null && member.current_lng != null) {
-        await evaluateNotifications(db, member, home);
+        await evaluateNotifications(db, member, home, extraLocations);
       }
     }
 

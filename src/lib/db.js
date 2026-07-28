@@ -91,6 +91,25 @@ export async function ensureSchema() {
       )
     `);
 
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS family_locations (
+        id TEXT PRIMARY KEY,
+        family_code TEXT NOT NULL,
+        name TEXT NOT NULL,
+        address TEXT NOT NULL,
+        lat REAL,
+        lng REAL,
+        created_at TEXT NOT NULL
+      )
+    `);
+
+    // Ensure notification_state has current_location_name column
+    try {
+      await db.execute(`ALTER TABLE notification_state ADD COLUMN current_location_name TEXT`);
+    } catch (_) {
+      // Column already exists
+    }
+
     schemaInitialized = true;
   } catch (e) {
     console.error('Schema init error:', e);

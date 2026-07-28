@@ -40,7 +40,10 @@ export async function GET(request) {
 
     const route = data.routes[0];
     const distance_km = Math.round((route.distance / 1000) * 10) / 10; // meters -> km, 1 decimal
-    const duration_min = Math.ceil(route.duration / 60); // seconds -> minutes, rounded up
+
+    // Apply real-world buffer factor (1.35x + 2 min buffer for intersections, traffic lights, crosswalks, & realistic pace)
+    const rawMinutes = route.duration / 60;
+    const duration_min = Math.max(2, Math.ceil(rawMinutes * 1.35 + 2));
 
     // Extract geometry coordinates array [[lng, lat], ...]
     const geometry = route.geometry ? route.geometry.coordinates : null;
@@ -58,13 +61,13 @@ export async function GET(request) {
       Math.cos((olat * Math.PI) / 180) * Math.cos((dlat * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
     const straightLineKm = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
-    // Apply 1.4x road factor for cycling, assume 15 km/h average bike speed
+    // Apply 1.4x road factor for cycling, assume 12 km/h average real-world pace + 2 min buffer
     const roadKm = straightLineKm * 1.4;
-    const mins = Math.ceil((roadKm / 15) * 60);
+    const mins = Math.ceil((roadKm / 12) * 60 + 2);
 
     return NextResponse.json({
       distance_km: Math.round(roadKm * 10) / 10,
-      duration_min: Math.max(1, mins),
+      duration_min: Math.max(2, mins),
       geometry: [[parseFloat(olng), parseFloat(olat)], [parseFloat(dlng), parseFloat(dlat)]],
       fallback: true,
     });

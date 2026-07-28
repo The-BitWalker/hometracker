@@ -35,9 +35,13 @@ export async function POST(request) {
       });
     }
 
-    // 3. Delete family_circles settings
+    // 3. Delete family_circles settings & extra locations
     await db.execute({
       sql: 'DELETE FROM family_circles WHERE family_code = ?',
+      args: [familyCode]
+    });
+    await db.execute({
+      sql: 'DELETE FROM family_locations WHERE family_code = ?',
       args: [familyCode]
     });
 
