@@ -29,6 +29,16 @@ export async function POST(request) {
       args: [user.id, user.family_code, lat, lng, now],
     });
 
+    // Record breadcrumb ping to location_history
+    try {
+      await db.execute({
+        sql: `INSERT INTO location_history (id, user_id, family_code, lat, lng, timestamp) VALUES (?, ?, ?, ?, ?, ?)`,
+        args: [crypto.randomUUID(), user.id, user.family_code, lat, lng, now],
+      });
+    } catch (hErr) {
+      console.warn('Failed to log location history (non-fatal):', hErr);
+    }
+
     // Run notification checks
     try {
       const homeRes = await db.execute({

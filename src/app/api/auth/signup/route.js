@@ -13,8 +13,9 @@ export async function POST(request) {
     }
 
     if (role !== 'parent' && role !== 'child') {
-      return NextResponse.json({ error: 'Invalid account role.' }, { status: 400 });
+      return NextResponse.json({ error: 'Invalid account role. New users must register as Parent or Child.' }, { status: 400 });
     }
+    const finalRole = role;
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email.trim())) {
@@ -38,7 +39,9 @@ export async function POST(request) {
     const passwordHash = await hashPassword(password);
     let assignedFamilyCode = '';
 
-    if (role === 'parent') {
+    if (finalRole === 'admin') {
+      assignedFamilyCode = 'ADMIN_GLOBAL';
+    } else if (role === 'parent') {
       let isUnique = false;
       while (!isUnique) {
         assignedFamilyCode = generateFamilyCode();
@@ -63,6 +66,27 @@ export async function POST(request) {
         return NextResponse.json({ error: 'No parent account found with that family code.' }, { status: 404 });
       }
       assignedFamilyCode = familyCode.trim().toUpperCase();
+
+      // Check subscription tier & member limit
+      const circleRes = await db.execute({
+        sql: 'SELECT subscription_tier FROM family_circles WHERE family_code = ?',
+        args: [assignedFamilyCode],
+      });
+      const circleTier = (circleRes.rows[0]?.subscription_tier || 'basic').toLowerCase();
+      const isPlus = circleTier !== 'basic' && circleTier !== 'free';
+      const maxMembers = isPlus ? 10 : 4;
+
+      const currentMembersRes = await db.execute({
+        sql: 'SELECT COUNT(*) as count FROM users WHERE family_code = ?',
+        args: [assignedFamilyCode],
+      });
+      const currentCount = Number(currentMembersRes.rows[0]?.count || 0);
+
+      if (currentCount >= maxMembers) {
+        return NextResponse.json({
+          error: `Family circle "${assignedFamilyCode}" is full (${maxMembers} members max on ${circleTier === 'plus' ? 'Plus' : 'Basic'} plan). Ask the circle parent to upgrade to HomeTracker Plus to add up to 10 members.`
+        }, { status: 400 });
+      }
     }
 
     const userId = 'usr_' + crypto.randomUUID();
@@ -71,8 +95,19 @@ export async function POST(request) {
 
     await db.execute({
       sql: 'INSERT INTO users (id, name, email, password_hash, role, family_code, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      args: [userId, name.trim(), email.trim().toLowerCase(), passwordHash, role, assignedFamilyCode, createdAt],
+      args: [userId, name.trim(), email.trim().toLowerCase(), passwordHash, finalRole, assignedFamilyCode, createdAt],
     });
+
+    if (role === 'parent') {
+      try {
+        await db.execute({
+          sql: "INSERT OR IGNORE INTO family_circles (family_code, subscription_tier, updated_at) VALUES (?, 'basic', ?)",
+          args: [assignedFamilyCode, createdAt],
+        });
+      } catch (fcErr) {
+        console.warn('Family circle creation notice:', fcErr);
+      }
+    }
 
     // Create session token
     const token = generateToken();

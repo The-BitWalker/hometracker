@@ -29,6 +29,12 @@ export async function POST(request) {
       args: [newFamilyCode, user.id]
     });
 
+    const nowIso = new Date().toISOString();
+    await db.execute({
+      sql: "INSERT OR IGNORE INTO family_circles (family_code, subscription_tier, created_at, updated_at) VALUES (?, 'basic', ?, ?)",
+      args: [newFamilyCode, nowIso, nowIso]
+    });
+
     return NextResponse.json({ success: true, role: 'parent', family_code: newFamilyCode });
   } catch (e) {
     console.error('Create circle error:', e);

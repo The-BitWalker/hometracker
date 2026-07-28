@@ -241,6 +241,61 @@ export default function DashboardPage() {
   const [newLocName, setNewLocName] = useState('');
   const [newLocAddress, setNewLocAddress] = useState('');
 
+  // Subscription & Pro Beta Program State
+  const [subscription, setSubscription] = useState(null);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [showPaymentInfoModal, setShowPaymentInfoModal] = useState(false);
+
+  // Pro Beta Application Modal State
+  const [showProRequestModal, setShowProRequestModal] = useState(false);
+  const [proReqFamilySize, setProReqFamilySize] = useState(4);
+  const [proReqWhyPro, setProReqWhyPro] = useState('');
+  const [proReqProblems, setProReqProblems] = useState('');
+  const [proReqFeatures, setProReqFeatures] = useState('');
+  const [submittingProReq, setSubmittingProReq] = useState(false);
+
+  // Monthly Feedback Modal State
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [fbTimesUsed, setFbTimesUsed] = useState('10-25 times');
+  const [fbMembersUsed, setFbMembersUsed] = useState(4);
+  const [fbSituations, setFbSituations] = useState('');
+  const [fbWorkedWell, setFbWorkedWell] = useState('');
+  const [fbProblems, setFbProblems] = useState('');
+  const [fbImprovement, setFbImprovement] = useState('');
+  const [fbRecScore, setFbRecScore] = useState(10);
+  const [submittingFb, setSubmittingFb] = useState(false);
+  const [sendingSurveyRemind, setSendingSurveyRemind] = useState(false);
+  const [surveyRemindSent, setSurveyRemindSent] = useState(false);
+  const [sendingUpgradeRemind, setSendingUpgradeRemind] = useState(false);
+  const [upgradeRemindSent, setUpgradeRemindSent] = useState(false);
+
+  // Admin Management Modal State
+  const [showAdminModal, setShowAdminModal] = useState(false);
+  const [adminTab, setAdminTab] = useState('stats'); // 'stats' | 'requests' | 'users' | 'feedback'
+  const [adminStats, setAdminStats] = useState(null);
+  const [adminRequests, setAdminRequests] = useState([]);
+  const [adminUsers, setAdminUsers] = useState([]);
+  const [adminFeedbackList, setAdminFeedbackList] = useState([]);
+  const [adminUserSearch, setAdminUserSearch] = useState('');
+  const [adminNoteInput, setAdminNoteInput] = useState('');
+  const [selectedReqId, setSelectedReqId] = useState(null);
+  const [loadingAdminData, setLoadingAdminData] = useState(false);
+  const [collapsedRequests, setCollapsedRequests] = useState(false);
+  const [collapsedFeedback, setCollapsedFeedback] = useState(false);
+
+  // Handle URL action parameter (e.g. ?action=request_pro)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('action') === 'request_pro') {
+        if (!subscription?.is_plus && user?.role === 'parent') {
+          setShowProRequestModal(true);
+        }
+        window.history.replaceState({}, '', window.location.pathname);
+      }
+    }
+  }, [subscription, user]);
+
   // Editing location state
   const [editingLocId, setEditingLocId] = useState(null); // 'home' or location id
   const [editName, setEditName] = useState('');
@@ -259,6 +314,7 @@ export default function DashboardPage() {
   const mapInstanceRef = useRef(null);
   const markersRef = useRef({});
   const routeLinesRef = useRef([]);
+  const trailPolylineRef = useRef(null);
   const profileMenuRef = useRef(null);
   const profileDropdownRef = useRef(null);
   const notificationMenuRef = useRef(null);
@@ -285,7 +341,11 @@ export default function DashboardPage() {
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('touchstart', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+    };
   }, []);
 
   // Settings Accordion Animation
@@ -385,24 +445,288 @@ export default function DashboardPage() {
 
     try {
       // First, trigger server-side notification evaluation for all child members.
-      // Await it so any newly-created notifications are picked up by the fetch below.
       await fetch('/api/notifications/check').catch(() => {});
 
-      const [homeRes, membersRes, notifRes, locRes] = await Promise.all([
+      const [homeRes, membersRes, notifRes, locRes, subRes] = await Promise.all([
         fetch('/api/circle/home').then((r) => r.json()),
         fetch('/api/circle/members').then((r) => r.json()),
         fetch('/api/notifications').then((r) => r.json()),
         fetch('/api/circle/locations').then((r) => r.json()),
+        fetch('/api/circle/subscription').then((r) => r.json()).catch(() => ({ subscription_tier: 'basic' })),
       ]);
 
       if (homeRes.home) setHome(homeRes.home);
       if (membersRes.members) setMembers(membersRes.members);
       if (notifRes.notifications) setNotifications(notifRes.notifications);
       if (locRes.locations) setExtraLocations(locRes.locations);
+      if (subRes && !subRes.error) setSubscription(subRes);
     } catch (e) {
       console.error('Refresh error:', e);
     }
   }, [user]);
+
+  // ---- Fetch Subscription, Home, Members & Locations on User Ready ----
+  useEffect(() => {
+    if (user) {
+      refreshData();
+      const interval = setInterval(refreshData, 15000);
+      return () => clearInterval(interval);
+    }
+  }, [user, refreshData]);
+
+  // ---- Submit Pro Beta Request ----
+  const handleSubmitProRequest = async (e) => {
+    e?.preventDefault();
+    if (user?.role !== 'parent') {
+      setModal({ type: 'warning', title: 'Parent Account Required', message: 'Only parent accounts can apply for HomeTracker Pro Beta access.' });
+      return;
+    }
+
+    if (!proReqWhyPro.trim() || !proReqProblems.trim()) {
+      setModal({ type: 'error', title: 'Incomplete Form', message: 'Please answer all required questions in the application form.' });
+      return;
+    }
+
+    setSubmittingProReq(true);
+    try {
+      const res = await fetch('/api/circle/subscription/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          family_size: proReqFamilySize,
+          why_pro: proReqWhyPro,
+          problems_to_solve: proReqProblems,
+          valuable_features: proReqFeatures,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setShowProRequestModal(false);
+        setModal({
+          type: 'success',
+          title: 'Application Submitted!',
+          message: 'Your HomeTracker Pro Beta application has been submitted for admin review. You will be notified once reviewed.',
+        });
+        await refreshData();
+      } else {
+        setModal({ type: 'error', title: 'Submission Failed', message: data.error || 'Failed to submit application.' });
+      }
+    } catch (err) {
+      setModal({ type: 'error', title: 'Error', message: err.message });
+    } finally {
+      setSubmittingProReq(false);
+    }
+  };
+
+  // ---- Submit Monthly Pro Feedback ----
+  const handleSubmitFeedback = async (e) => {
+    e?.preventDefault();
+    if (!fbWorkedWell.trim() || !fbImprovement.trim()) {
+      setModal({ type: 'error', title: 'Incomplete Form', message: 'Please share what worked well and what could be improved.' });
+      return;
+    }
+
+    setSubmittingFb(true);
+    try {
+      const res = await fetch('/api/circle/subscription/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          times_used: fbTimesUsed,
+          members_used: fbMembersUsed,
+          usage_situations: fbSituations,
+          worked_well: fbWorkedWell,
+          problems_encountered: fbProblems,
+          features_to_improve: fbImprovement,
+          recommendation_score: fbRecScore,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setShowFeedbackModal(false);
+        setModal({
+          type: 'success',
+          title: 'Feedback Submitted!',
+          message: 'Thank you for your monthly feedback! Your active feedback helps maintain your lifetime Pro access.',
+        });
+        await refreshData();
+      } else {
+        setModal({ type: 'error', title: 'Submission Error', message: data.error || 'Failed to submit feedback.' });
+      }
+    } catch (err) {
+      setModal({ type: 'error', title: 'Error', message: err.message });
+    } finally {
+      setSubmittingFb(false);
+    }
+  };
+
+  // ---- Admin Panel Data Fetching ----
+  const fetchAdminData = useCallback(async (tab = adminTab, query = adminUserSearch) => {
+    if (user?.role !== 'admin') return;
+    setLoadingAdminData(true);
+    try {
+      if (tab === 'stats') {
+        const res = await fetch('/api/admin/stats').then((r) => r.json());
+        if (res.stats) setAdminStats(res.stats);
+      } else if (tab === 'requests') {
+        const res = await fetch('/api/admin/requests').then((r) => r.json());
+        if (res.requests) setAdminRequests(res.requests);
+      } else if (tab === 'users') {
+        const res = await fetch(`/api/admin/users?q=${encodeURIComponent(query)}`).then((r) => r.json());
+        if (res.users) setAdminUsers(res.users);
+      } else if (tab === 'feedback') {
+        const res = await fetch('/api/admin/feedback').then((r) => r.json());
+        if (res.feedback) setAdminFeedbackList(res.feedback);
+      }
+    } catch (err) {
+      console.error('Admin data fetch error:', err);
+    } finally {
+      setLoadingAdminData(false);
+    }
+  }, [user, adminTab, adminUserSearch]);
+
+  const handleAdminActionRequest = async (requestId, action) => {
+    try {
+      const res = await fetch('/api/admin/requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ request_id: requestId, action, notes: adminNoteInput }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setAdminNoteInput('');
+        setModal({ type: 'success', title: 'Action Completed', message: data.message });
+        await fetchAdminData('requests');
+        await fetchAdminData('stats');
+        await refreshData();
+      } else {
+        setModal({ type: 'error', title: 'Action Failed', message: data.error });
+      }
+    } catch (err) {
+      setModal({ type: 'error', title: 'Error', message: err.message });
+    }
+  };
+
+  const handleClearAllProRequests = async () => {
+    try {
+      const res = await fetch('/api/admin/requests', { method: 'DELETE' });
+      const data = await res.json();
+      if (res.ok) {
+        setModal({ type: 'success', title: 'Applications Cleared', message: data.message });
+        await fetchAdminData('requests');
+        await fetchAdminData('stats');
+      } else {
+        setModal({ type: 'error', title: 'Action Failed', message: data.error });
+      }
+    } catch (err) {
+      setModal({ type: 'error', title: 'Error', message: err.message });
+    }
+  };
+
+  const handleClearAllFeedback = async () => {
+    try {
+      const res = await fetch('/api/admin/feedback', { method: 'DELETE' });
+      const data = await res.json();
+      if (res.ok) {
+        setModal({ type: 'success', title: 'Reviews Cleared', message: data.message });
+        await fetchAdminData('feedback');
+        await fetchAdminData('stats');
+      } else {
+        setModal({ type: 'error', title: 'Action Failed', message: data.error });
+      }
+    } catch (err) {
+      setModal({ type: 'error', title: 'Error', message: err.message });
+    }
+  };
+
+  const handlePostponeFeedback = async () => {
+    try {
+      const res = await fetch('/api/circle/subscription/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'postpone' }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setModal({
+          type: 'info',
+          title: 'Review Postponed',
+          message: 'Your monthly review has been postponed for 24 hours. Your account is temporarily on Basic limits for 1 day.',
+        });
+        await refreshData();
+      } else {
+        setModal({ type: 'error', title: 'Error', message: data.error });
+      }
+    } catch (err) {
+      setModal({ type: 'error', title: 'Error', message: err.message });
+    }
+  };
+
+  const handleRemindParentSurvey = async () => {
+    try {
+      setSendingSurveyRemind(true);
+      const res = await fetch('/api/notifications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'remind_parent_survey' }),
+      });
+      const data = await res.json();
+      setSendingSurveyRemind(false);
+      if (res.ok) {
+        setSurveyRemindSent(true);
+        setTimeout(() => setSurveyRemindSent(false), 5000);
+      } else {
+        setModal({ type: 'error', title: 'Error', message: data.error || 'Failed to send reminder.' });
+      }
+    } catch (err) {
+      setSendingSurveyRemind(false);
+      setModal({ type: 'error', title: 'Error', message: err.message });
+    }
+  };
+
+  const handleRemindParentUpgrade = async () => {
+    try {
+      setSendingUpgradeRemind(true);
+      const res = await fetch('/api/notifications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'remind_parent_upgrade' }),
+      });
+      const data = await res.json();
+      setSendingUpgradeRemind(false);
+      if (res.ok) {
+        setUpgradeRemindSent(true);
+        setTimeout(() => setUpgradeRemindSent(false), 5000);
+      } else {
+        setModal({ type: 'error', title: 'Error', message: data.error || 'Failed to send reminder.' });
+      }
+    } catch (err) {
+      setSendingUpgradeRemind(false);
+      setModal({ type: 'error', title: 'Error', message: err.message });
+    }
+  };
+
+  const handleAdminUserAction = async (userId, action) => {
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, action, reason: adminNoteInput }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setAdminNoteInput('');
+        setModal({ type: 'success', title: 'User Updated', message: data.message });
+        await fetchAdminData('users');
+        await fetchAdminData('stats');
+        await refreshData();
+      } else {
+        setModal({ type: 'error', title: 'Action Failed', message: data.error });
+      }
+    } catch (err) {
+      setModal({ type: 'error', title: 'Error', message: err.message });
+    }
+  };
 
   // ---- Fetch ETAs when members/home change ----
   useEffect(() => {
@@ -602,6 +926,52 @@ export default function DashboardPage() {
     window.location.href = '/auth';
   };
 
+  const handleViewBreadcrumbs = async (member) => {
+    try {
+      const res = await fetch(`/api/circle/history?user_id=${member.id}`);
+      const data = await res.json();
+      if (!res.ok) {
+        setModal({ type: 'error', title: 'Error', message: data.error || 'Failed to fetch location history.' });
+        return;
+      }
+
+      if (!data.breadcrumbs || data.breadcrumbs.length === 0) {
+        setModal({
+          type: 'warning',
+          title: 'No Trail History',
+          message: `No location breadcrumbs recorded for ${member.name} in the last ${data.history_limit_days === 30 ? '30 days' : '24 hours'}.`,
+        });
+        return;
+      }
+
+      // Draw polyline on map
+      if (mapInstanceRef.current && window.L) {
+        if (trailPolylineRef.current) {
+          mapInstanceRef.current.removeLayer(trailPolylineRef.current);
+        }
+
+        const latLngs = data.breadcrumbs.map((b) => [b.lat, b.lng]);
+        const polyline = window.L.polyline(latLngs, {
+          color: subscription?.is_plus ? '#5621bf' : '#3b82f6',
+          weight: 4,
+          opacity: 0.85,
+          dashArray: '6, 6',
+        }).addTo(mapInstanceRef.current);
+
+        trailPolylineRef.current = polyline;
+        mapInstanceRef.current.fitBounds(polyline.getBounds(), { padding: [40, 40] });
+
+        setModal({
+          type: 'success',
+          title: `${data.history_limit_days === 30 ? '30-Day Pro Trail' : '24-Hour Trail'} Loaded`,
+          message: `Showing ${data.breadcrumbs.length} recorded location points for ${member.name}.`,
+        });
+      }
+    } catch (e) {
+      setModal({ type: 'error', title: 'Error', message: e.message });
+    }
+  };
+
   const fallbackCopyTextToClipboard = (text) => {
     try {
       const textArea = document.createElement('textarea');
@@ -736,8 +1106,18 @@ export default function DashboardPage() {
     }
 
     const totalSavedCount = (homeIsSet ? 1 : 0) + extraLocations.length;
-    if (totalSavedCount >= 2) {
-      setModal({ type: 'warning', title: 'Limit Reached', message: 'Maximum of 2 locations (including Home) allowed.' });
+    const isPlusCircle = subscription?.is_plus || (subscription?.subscription_tier && subscription?.subscription_tier.toLowerCase() !== 'basic' && subscription?.subscription_tier.toLowerCase() !== 'free');
+    const maxAllowed = isPlusCircle ? 50 : 2;
+    if (totalSavedCount >= maxAllowed) {
+      setModal({
+        type: 'warning',
+        title: isPlusCircle ? 'Limit Reached' : 'Location Limit Reached (Free Tier)',
+        message: isPlusCircle
+          ? `Maximum of ${maxAllowed} locations reached.`
+          : 'Free Tier circles can save up to 2 places (Home Base + 1 Saved Location). Upgrade to HomeTracker Plus for unlimited saved places!',
+        confirmText: isPlusCircle ? undefined : 'Upgrade to Plus',
+        onConfirm: isPlusCircle ? undefined : () => setShowUpgradeModal(true),
+      });
       return;
     }
 
@@ -755,7 +1135,17 @@ export default function DashboardPage() {
         setNewLocAddress('');
         await refreshData();
       } else {
-        setModal({ type: 'error', title: 'Error', message: data.error || 'Failed to add location.' });
+        if (data.error && data.error.includes('Limit')) {
+          setModal({
+            type: 'warning',
+            title: 'Location Limit Reached',
+            message: data.error,
+            confirmText: 'Upgrade to Plus',
+            onConfirm: () => setShowUpgradeModal(true),
+          });
+        } else {
+          setModal({ type: 'error', title: 'Error', message: data.error || 'Failed to add location.' });
+        }
       }
     } catch (e) {
       setModal({ type: 'error', title: 'Error', message: e.message });
@@ -866,7 +1256,15 @@ export default function DashboardPage() {
         setModal({ type: 'success', title: 'Joined Family', message: 'You have successfully joined the family circle!' });
         await refreshData();
       } else {
-        setModal({ type: 'error', title: 'Error', message: data.error || 'Failed to join family.' });
+        if (data.error && (data.error.includes('limit reached') || data.error.includes('full'))) {
+          setModal({
+            type: 'warning',
+            title: 'Family Circle Full',
+            message: data.error,
+          });
+        } else {
+          setModal({ type: 'error', title: 'Error', message: data.error || 'Failed to join family.' });
+        }
       }
     } catch (e) {
       setModal({ type: 'error', title: 'Error', message: e.message });
@@ -942,18 +1340,18 @@ export default function DashboardPage() {
         onClick={() => setShowNotificationsMenu(!showNotificationsMenu)}
         onMouseEnter={hoverScaleIn}
         onMouseLeave={hoverScaleOut}
-        className="h-9 w-9 sm:h-10 sm:w-10 flex items-center justify-center rounded-2xl bg-white/90 backdrop-blur-md border border-slate-200 shadow-sm hover:shadow-md hover:border-[#5621bf]/30 transition-all duration-200 active:scale-98 cursor-pointer relative"
+        className="h-8 w-8 sm:h-10 sm:w-10 flex items-center justify-center rounded-2xl bg-white/90 backdrop-blur-md border border-slate-200 shadow-sm hover:shadow-md hover:border-[#5621bf]/30 transition-all duration-200 active:scale-98 cursor-pointer relative shrink-0"
         aria-expanded={showNotificationsMenu}
         aria-haspopup="true"
       >
-        <i className="fa-solid fa-bell text-slate-500 text-sm group-hover:text-[#5621bf] transition-colors" />
+        <i className="fa-solid fa-bell text-slate-500 text-xs sm:text-sm group-hover:text-[#5621bf] transition-colors" />
         {unreadNotifications.length > 0 && (
-          <span className="absolute top-2 right-2.5 w-2.5 h-2.5 rounded-full bg-rose-500 shadow-[0_0_0_2px_rgba(255,255,255,1)]" />
+          <span className="absolute top-1.5 right-2 sm:top-2 sm:right-2.5 w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-rose-500 shadow-[0_0_0_2px_rgba(255,255,255,1)]" />
         )}
       </button>
 
       {/* Dropdown Menu */}
-      <div ref={notificationDropdownRef} style={{ display: 'none', opacity: 0, visibility: 'hidden' }} className="absolute right-[-52px] sm:right-0 mt-2 w-72 sm:w-80 bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-200/90 z-50 origin-top-right overflow-hidden flex-col max-h-[400px]">
+      <div ref={notificationDropdownRef} style={{ display: 'none', opacity: 0, visibility: 'hidden' }} className="absolute right-[-40px] sm:right-0 mt-2 w-72 sm:w-80 max-w-[calc(100vw-24px)] bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-200/90 z-[1001] origin-top-right overflow-hidden flex-col max-h-[400px]">
         <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
           <h3 className="text-sm font-black text-slate-900">Notifications</h3>
           {unreadNotifications.length > 0 && (
@@ -989,21 +1387,21 @@ export default function DashboardPage() {
         onClick={() => setShowProfileMenu(!showProfileMenu)}
         onMouseEnter={hoverScaleIn}
         onMouseLeave={hoverScaleOut}
-        className="h-9 sm:h-10 flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 rounded-2xl bg-white/90 backdrop-blur-md border border-slate-200 shadow-sm hover:shadow-md hover:border-[#5621bf]/30 transition-all duration-200 active:scale-98 cursor-pointer"
+        className="h-8 sm:h-10 flex items-center gap-1 sm:gap-2 px-1.5 sm:px-3 rounded-2xl bg-white/90 backdrop-blur-md border border-slate-200 shadow-sm hover:shadow-md hover:border-[#5621bf]/30 transition-all duration-200 active:scale-98 cursor-pointer shrink-0"
         aria-expanded={showProfileMenu}
         aria-haspopup="true"
       >
-        <div className="w-7 h-7 rounded-full avatar-gradient text-white flex items-center justify-center text-[10px] font-black shadow-sm shrink-0">
+        <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-full avatar-gradient text-white flex items-center justify-center text-[9px] sm:text-[10px] font-black shadow-sm shrink-0">
           {(user?.name || 'U').substring(0, 2).toUpperCase()}
         </div>
-        <span className="hidden sm:block text-xs font-extrabold text-slate-900 truncate max-w-[100px]">
+        <span className="hidden md:block text-xs font-extrabold text-slate-900 truncate max-w-[100px]">
           {user?.name}
         </span>
-        <i className={`fa-solid fa-chevron-down text-[9px] text-slate-400 transition-transform duration-200 ${showProfileMenu ? 'rotate-180 text-[#5621bf]' : ''}`} />
+        <i className={`fa-solid fa-chevron-down text-[8px] sm:text-[9px] text-slate-400 transition-transform duration-200 ${showProfileMenu ? 'rotate-180 text-[#5621bf]' : ''}`} />
       </button>
 
       {/* Dropdown Menu */}
-      <div ref={profileDropdownRef} style={{ display: 'none', opacity: 0, visibility: 'hidden' }} className="absolute right-0 mt-2 w-64 sm:w-72 bg-white/95 backdrop-blur-xl rounded-2xl p-3 sm:p-4 shadow-2xl border border-slate-200/90 z-50">
+      <div ref={profileDropdownRef} style={{ display: 'none', opacity: 0, visibility: 'hidden' }} className="absolute right-0 mt-2 w-64 sm:w-72 max-w-[calc(100vw-24px)] bg-white/95 backdrop-blur-xl rounded-2xl p-3 sm:p-4 shadow-2xl border border-slate-200/90 z-[1001] max-h-[85vh] overflow-y-auto">
           {/* Profile Header */}
           <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
             <div className="w-10 h-10 rounded-full avatar-gradient text-white flex items-center justify-center text-sm font-black shadow-sm shrink-0">
@@ -1012,27 +1410,49 @@ export default function DashboardPage() {
             <div className="min-w-0 flex-1">
               <p className="text-sm font-black text-slate-900 truncate">{user?.name}</p>
               <p className="text-xs font-medium text-slate-500 truncate">{user?.email}</p>
-              <span className={`inline-block mt-1 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider ${isParent ? 'bg-[#5621bf]/10 text-[#5621bf]' : 'bg-amber-100 text-amber-800'}`}>
-                {isParent ? 'Parent Account' : 'Child / Teen Account'}
+              <span className={`inline-block mt-1 px-2.5 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider ${
+                user?.role === 'admin'
+                  ? 'bg-blue-100 text-blue-700 border border-blue-200'
+                  : isParent
+                  ? 'bg-[#5621bf]/10 text-[#5621bf]'
+                  : 'bg-amber-100 text-amber-800'
+              }`}>
+                {user?.role === 'admin' ? 'Admin Account' : isParent ? 'Parent Account' : 'Child / Teen Account'}
               </span>
             </div>
           </div>
 
           {/* Family Code row */}
-          <div className="py-2.5 px-3 my-2.5 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between">
-            <div>
-              <p className="text-[9px] font-extrabold uppercase text-slate-400">Family Code</p>
-              <p className="text-xs font-black text-[#5621bf] tracking-widest">{user?.family_code || '--'}</p>
-            </div>
-            {user?.family_code && (
+          {user?.family_code && (
+            <div className="py-2.5 px-3 my-2.5 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between">
+              <div>
+                <p className="text-[9px] font-extrabold uppercase text-slate-400">Family Code</p>
+                <p className="text-xs font-black text-[#5621bf] tracking-widest">{user?.family_code}</p>
+              </div>
               <button onClick={handleCopyCode} className="text-xs font-bold text-slate-500 hover:text-[#5621bf] p-1 transition flex items-center gap-1 cursor-pointer">
                 <i className={copyIcon} />
               </button>
-            )}
-          </div>
+            </div>
+          )}
 
           {/* Menu Actions */}
           <div className="pt-1 space-y-1">
+            <a
+              href="/"
+              className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-purple-50 hover:bg-purple-100 text-[#5621bf] font-extrabold text-xs transition-colors duration-150 group cursor-pointer mb-1"
+            >
+              <span className="flex items-center gap-2">Go to Main Page</span>
+              <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
+            </a>
+
+            <a
+              href="/#pricing"
+              className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 font-extrabold text-xs transition-colors duration-150 group cursor-pointer mb-1"
+            >
+              <span className="flex items-center gap-2">Subscription Plans</span>
+              <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
+            </a>
+
             {!isParent && user?.family_code && (
               <button
                 onClick={handleLeaveCircle}
@@ -1040,10 +1460,7 @@ export default function DashboardPage() {
                 onMouseLeave={hoverScaleOut}
                 className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-600 font-extrabold text-xs transition-colors duration-150 group cursor-pointer mb-1"
               >
-                <span className="flex items-center gap-2">
-                  <i className="fa-solid fa-person-walking-arrow-right text-sm group-hover:-translate-x-0.5 transition-transform" />
-                  Leave Family Circle
-                </span>
+                <span className="flex items-center gap-2">Leave Family Circle</span>
                 <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
               </button>
             )}
@@ -1054,10 +1471,7 @@ export default function DashboardPage() {
                 onMouseLeave={hoverScaleOut}
                 className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-700 font-extrabold text-xs transition-colors duration-150 group cursor-pointer mb-1"
               >
-                <span className="flex items-center gap-2">
-                  <i className="fa-solid fa-users-slash text-sm group-hover:-translate-x-0.5 transition-transform" />
-                  Disband Family Circle
-                </span>
+                <span className="flex items-center gap-2">Disband Family Circle</span>
                 <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
               </button>
             )}
@@ -1067,10 +1481,7 @@ export default function DashboardPage() {
               onMouseLeave={hoverScaleOut}
               className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-600 font-extrabold text-xs transition-colors duration-150 group cursor-pointer mb-1"
             >
-              <span className="flex items-center gap-2">
-                <i className="fa-solid fa-right-from-bracket text-sm group-hover:-translate-x-0.5 transition-transform" />
-                Sign Out
-              </span>
+              <span className="flex items-center gap-2">Sign Out</span>
               <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
             </button>
             <button
@@ -1079,10 +1490,7 @@ export default function DashboardPage() {
               onMouseLeave={hoverScaleOut}
               className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 font-extrabold text-xs transition-colors duration-150 group cursor-pointer"
             >
-              <span className="flex items-center gap-2">
-                <i className="fa-solid fa-trash-can text-sm group-hover:-translate-y-0.5 transition-transform" />
-                Delete Account
-              </span>
+              <span className="flex items-center gap-2">Delete Account</span>
               <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
             </button>
           </div>
@@ -1158,28 +1566,39 @@ export default function DashboardPage() {
         ? `You are at ${extraLoc.name}. ~${travelMins} min travel (${distText} km from Home).`
         : `${distText} km from Home (~${travelMins} min travel).`;
 
-      if (home.target_home_time) {
-        const [tH, tM] = home.target_home_time.split(':').map(Number);
-        const isPastCurfewNow = checkIsPastCurfew(home.target_home_time);
+      if (home.target_home_time && typeof home.target_home_time === 'string' && home.target_home_time.includes(':')) {
+        const parts = home.target_home_time.split(':').map(Number);
+        const tH = isNaN(parts[0]) ? null : parts[0];
+        const tM = isNaN(parts[1]) ? null : parts[1];
 
-        if (isPastCurfewNow) {
-          leaveByText = 'IMMEDIATELY';
-          subtitle = `⚠️ Past Curfew (${home.target_home_time})! ${extraLoc ? `You are at ${extraLoc.name}, ` : ''}${distText} km away (~${travelMins} min). Leave immediately!`;
-        } else {
-          // Target curfew is later today
-          const curfewDate = new Date();
-          curfewDate.setHours(tH, tM, 0, 0);
-          const leaveTimestamp = curfewDate.getTime() - travelMins * 60000;
+        if (tH !== null && tM !== null) {
+          const isPastCurfewNow = checkIsPastCurfew(home.target_home_time);
 
-          if (Date.now() >= leaveTimestamp) {
-            leaveByText = 'NOW';
-            subtitle = `🚨 Leave NOW to arrive on time for your ${home.target_home_time} curfew! (${distText} km away)`;
+          if (isPastCurfewNow) {
+            leaveByText = 'IMMEDIATELY';
+            subtitle = `Past Curfew (${home.target_home_time})! ${extraLoc ? `You are at ${extraLoc.name}, ` : ''}${distText} km away (~${travelMins} min). Leave immediately!`;
           } else {
-            const leaveDate = new Date(leaveTimestamp);
-            const lH = String(leaveDate.getHours()).padStart(2, '0');
-            const lM = String(leaveDate.getMinutes()).padStart(2, '0');
-            leaveByText = `${lH}:${lM}`;
-            subtitle = `${extraLoc ? `You are at ${extraLoc.name}. ` : ''}Leave by ${leaveByText} to arrive on time for ${home.target_home_time} curfew (${distText} km away).`;
+            const curfewDate = new Date();
+            curfewDate.setHours(tH, tM, 0, 0);
+            const safeTravelMins = typeof travelMins === 'number' && !isNaN(travelMins) ? travelMins : 10;
+            const leaveTimestamp = curfewDate.getTime() - safeTravelMins * 60000;
+
+            if (!isNaN(leaveTimestamp)) {
+              if (Date.now() >= leaveTimestamp) {
+                leaveByText = 'NOW';
+                subtitle = `Leave NOW to arrive on time for your ${home.target_home_time} curfew! (${distText} km away)`;
+              } else {
+                const leaveDate = new Date(leaveTimestamp);
+                const hrs = leaveDate.getHours();
+                const mins = leaveDate.getMinutes();
+                if (!isNaN(hrs) && !isNaN(mins)) {
+                  const lH = String(hrs).padStart(2, '0');
+                  const lM = String(mins).padStart(2, '0');
+                  leaveByText = `${lH}:${lM}`;
+                  subtitle = `${extraLoc ? `You are at ${extraLoc.name}. ` : ''}Leave by ${leaveByText} to arrive on time for ${home.target_home_time} curfew (${distText} km away).`;
+                }
+              }
+            }
           }
         }
       }
@@ -1218,8 +1637,12 @@ export default function DashboardPage() {
   }
 
   const isParent = user?.role === 'parent';
+  const isAdmin = user?.role === 'admin';
+  const isChild = user?.role === 'child';
   const homeIsSet = home?.home_address;
   const totalSavedLocations = (homeIsSet ? 1 : 0) + extraLocations.length;
+  const isPlusCircle = subscription?.is_plus || user?.pro_status === 'approved' || (subscription?.subscription_tier && subscription?.subscription_tier.toLowerCase() !== 'basic' && subscription?.subscription_tier.toLowerCase() !== 'free');
+  const maxLocationsAllowed = isPlusCircle ? 50 : 2;
 
   // ---- Helper: get member status info ----
   const getMemberStatus = (member) => {
@@ -1284,7 +1707,7 @@ export default function DashboardPage() {
     </div>
   );
 
-  if (user && !user.family_code) {
+  if (user && user.role !== 'admin' && (!user.family_code || user.family_code === 'ADMIN_GLOBAL')) {
     return (
       <div className="min-h-screen min-h-dvh flex flex-col relative overflow-hidden bg-slate-50 items-center justify-center p-6">
         <CustomModal modal={modal} onClose={() => setModal(null)} />
@@ -1346,9 +1769,408 @@ export default function DashboardPage() {
     );
   }
 
+  if (user && user.role === 'admin') {
+    return (
+      <div className="min-h-screen min-h-dvh flex flex-col bg-slate-50 relative">
+        <CustomModal modal={modal} onClose={() => setModal(null)} />
+        {renderToast()}
+
+        {/* Clean Header */}
+        <header className="w-full px-4 sm:px-6 py-3 bg-white border-b border-slate-200 flex items-center justify-between z-20 shrink-0 shadow-xs">
+          <Link href="/" className="flex items-center gap-2 group">
+            <Image src="/logo.png" alt="HOMETRACKER Logo" width={36} height={36} className="w-8 h-8 object-contain" />
+            <span className="font-extrabold text-lg tracking-tight text-slate-900">
+              HOME<span className="text-[#5621bf]">TRACKER</span>
+            </span>
+          </Link>
+          <div className="flex items-center gap-2">
+            {renderNotificationDropdown()}
+            {renderProfileDropdown()}
+          </div>
+        </header>
+
+        {/* Admin Dashboard Full Page Main Content */}
+        <main className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-6 space-y-4 sm:space-y-6">
+          {/* Dashboard Title Card */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-xs">
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg sm:text-2xl font-black text-slate-900">HomeTracker Admin Panel</h1>
+              </div>
+              <p className="text-[11px] sm:text-xs text-slate-500 font-medium mt-0.5">Manage user accounts, family circles, Pro applications, and monthly product reviews.</p>
+            </div>
+          </div>
+
+          {/* Navigation Tabs */}
+          <div className="bg-white p-1.5 sm:p-2 rounded-2xl border border-slate-200 flex gap-1.5 sm:gap-2 overflow-x-auto shadow-xs custom-scroll">
+            <button
+              onClick={() => { setAdminTab('stats'); fetchAdminData('stats'); }}
+              className={`px-3 py-2 sm:px-4 sm:py-2 rounded-xl font-extrabold text-[11px] sm:text-xs transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+                adminTab === 'stats' ? 'bg-[#5621bf] text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <i className="fa-solid fa-chart-pie" /> Overview Stats
+            </button>
+
+            <button
+              onClick={() => { setAdminTab('requests'); fetchAdminData('requests'); }}
+              className={`px-3 py-2 sm:px-4 sm:py-2 rounded-xl font-extrabold text-[11px] sm:text-xs transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+                adminTab === 'requests' ? 'bg-[#5621bf] text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <i className="fa-solid fa-paper-plane" /> Pro Requests
+              {adminStats?.pending_requests > 0 && (
+                <span className="bg-[#5621bf] text-white text-[9px] sm:text-[10px] font-black px-1.5 py-0.2 rounded-full">
+                  {adminStats.pending_requests}
+                </span>
+              )}
+            </button>
+
+            <button
+              onClick={() => { setAdminTab('users'); fetchAdminData('users'); }}
+              className={`px-3 py-2 sm:px-4 sm:py-2 rounded-xl font-extrabold text-[11px] sm:text-xs transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+                adminTab === 'users' ? 'bg-[#5621bf] text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <i className="fa-solid fa-users" /> User Governance
+            </button>
+
+            <button
+              onClick={() => { setAdminTab('feedback'); fetchAdminData('feedback'); }}
+              className={`px-3 py-2 sm:px-4 sm:py-2 rounded-xl font-extrabold text-[11px] sm:text-xs transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+                adminTab === 'feedback' ? 'bg-[#5621bf] text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <i className="fa-solid fa-comments" /> Monthly Reviews
+            </button>
+          </div>
+
+          {/* Tab Body Content */}
+          <div className="bg-white p-3.5 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4 sm:space-y-6">
+            {loadingAdminData && (
+              <div className="flex justify-center items-center py-12 text-[#5621bf]">
+                <i className="fa-solid fa-spinner animate-spin text-3xl" />
+              </div>
+            )}
+
+            {/* 1. OVERVIEW STATS TAB */}
+            {!loadingAdminData && adminTab === 'stats' && adminStats && (
+              <div className="space-y-4 sm:space-y-6">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3">
+                  <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl bg-slate-50 border border-slate-200 text-center space-y-0.5 sm:space-y-1">
+                    <p className="text-[9px] sm:text-[10px] font-black uppercase text-slate-400">Total Users</p>
+                    <p className="text-xl sm:text-2xl font-black text-slate-900">{adminStats.total_users}</p>
+                  </div>
+                  <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl bg-slate-50 border border-slate-200 text-center space-y-0.5 sm:space-y-1">
+                    <p className="text-[9px] sm:text-[10px] font-black uppercase text-slate-400">Free Users</p>
+                    <p className="text-xl sm:text-2xl font-black text-slate-700">{adminStats.free_users}</p>
+                  </div>
+                  <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl bg-purple-50 border border-purple-200 text-center space-y-0.5 sm:space-y-1">
+                    <p className="text-[9px] sm:text-[10px] font-black uppercase text-[#5621bf]">Pro Members</p>
+                    <p className="text-xl sm:text-2xl font-black text-[#5621bf]">{adminStats.pro_users}</p>
+                  </div>
+                  <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl bg-amber-50 border border-amber-200 text-center space-y-0.5 sm:space-y-1">
+                    <p className="text-[9px] sm:text-[10px] font-black uppercase text-amber-800">Pending Requests</p>
+                    <p className="text-xl sm:text-2xl font-black text-amber-900">{adminStats.pending_requests}</p>
+                  </div>
+                  <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl bg-emerald-50 border border-emerald-200 text-center space-y-0.5 sm:space-y-1">
+                    <p className="text-[9px] sm:text-[10px] font-black uppercase text-emerald-800">Feedback Reviews</p>
+                    <p className="text-xl sm:text-2xl font-black text-emerald-900">{adminStats.total_feedback}</p>
+                  </div>
+                  <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl bg-slate-50 border border-slate-200 text-center space-y-0.5 sm:space-y-1">
+                    <p className="text-[9px] sm:text-[10px] font-black uppercase text-slate-400">Family Circles</p>
+                    <p className="text-xl sm:text-2xl font-black text-slate-900">{adminStats.total_circles}</p>
+                  </div>
+                </div>
+
+                <div className="p-4 sm:p-5 rounded-2xl bg-purple-50/60 border border-purple-200/80 space-y-2.5 sm:space-y-3">
+                  <h4 className="font-black text-slate-900 text-xs sm:text-sm flex items-center gap-2">
+                    <i className="fa-solid fa-shield-halved text-[#5621bf]" /> Pro Governance Principles
+                  </h4>
+                  <ul className="text-[11px] sm:text-xs text-slate-600 space-y-1.5 sm:space-y-2 leading-relaxed">
+                    <li>• <strong>Community Partnership:</strong> Pro members receive lifetime access in exchange for active monthly product feedback.</li>
+                    <li>• <strong>Fair Evaluation:</strong> Review why applicants want Pro access and their intended family setup.</li>
+                    <li>• <strong>Quality Enforcement:</strong> Users who repeatedly submit empty or fake feedback can have Pro access revoked by Admins.</li>
+                  </ul>
+                </div>
+              </div>
+            )}
+
+            {/* 2. PRO REQUESTS TAB */}
+            {!loadingAdminData && adminTab === 'requests' && (
+              <div className="space-y-3 sm:space-y-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-black text-slate-900 text-xs sm:text-sm">Pro Applications ({adminRequests.length})</h4>
+                  {adminRequests.length > 0 && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setCollapsedRequests(!collapsedRequests)}
+                        className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black transition cursor-pointer flex items-center gap-1.5 shadow-xs"
+                      >
+                        <i className={`fa-solid ${collapsedRequests ? 'fa-chevron-down' : 'fa-chevron-up'} text-[10px]`} />
+                        {collapsedRequests ? 'Expand All' : 'Collapse All'}
+                      </button>
+                      <button
+                        onClick={handleClearAllProRequests}
+                        className="px-3 py-1.5 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-700 text-[10px] font-black transition cursor-pointer flex items-center gap-1.5 shadow-xs"
+                      >
+                        <i className="fa-solid fa-trash-can text-[10px]" /> Clear All Applications
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {adminRequests.length === 0 ? (
+                  <div className="p-6 sm:p-8 text-center bg-slate-50 rounded-2xl border border-slate-200 text-slate-400 text-xs font-semibold">
+                    No Pro applications found.
+                  </div>
+                ) : (
+                  adminRequests.map((req) => (
+                    <div key={req.id} className="p-3.5 sm:p-5 rounded-2xl bg-slate-50/60 border border-slate-200 space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-2.5">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-xs sm:text-sm font-black text-slate-900">{req.user_name}</span>
+                          <span className="text-[11px] text-slate-500 font-semibold">({req.email})</span>
+                          <span className="text-[10px] sm:text-xs font-black text-[#5621bf] bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-lg">
+                            Code: {req.family_code}
+                          </span>
+                        </div>
+                        <span className={`self-start sm:self-auto px-2.5 py-0.5 rounded-full text-[9px] sm:text-[10px] font-black uppercase ${
+                          req.status === 'approved' ? 'bg-emerald-100 text-emerald-800' :
+                          req.status === 'rejected' ? 'bg-rose-100 text-rose-800' :
+                          'bg-amber-100 text-amber-900'
+                        }`}>
+                          {req.status}
+                        </span>
+                      </div>
+
+                      {!collapsedRequests && (
+                        <>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+                        <div className="p-2.5 sm:p-3 rounded-xl bg-white border border-slate-200 space-y-0.5">
+                          <span className="text-[9px] sm:text-[10px] font-black text-slate-400 uppercase">Family Size</span>
+                          <p className="font-bold text-slate-800">{req.family_size} Members</p>
+                        </div>
+                        <div className="p-2.5 sm:p-3 rounded-xl bg-white border border-slate-200 space-y-0.5 sm:col-span-2">
+                          <span className="text-[9px] sm:text-[10px] font-black text-slate-400 uppercase">Why Pro Wanted</span>
+                          <p className="font-medium text-slate-800 leading-snug">{req.why_pro}</p>
+                        </div>
+                        <div className="p-2.5 sm:p-3 rounded-xl bg-white border border-slate-200 space-y-0.5 sm:col-span-3">
+                          <span className="text-[9px] sm:text-[10px] font-black text-slate-400 uppercase">Problems To Solve</span>
+                          <p className="font-medium text-slate-800 leading-snug">{req.problems_to_solve}</p>
+                        </div>
+                      </div>
+
+                      {req.status === 'pending' && (
+                        <div className="pt-1 flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
+                          <input
+                            type="text"
+                            placeholder="Admin Notes / Rationale (optional)..."
+                            value={selectedReqId === req.id ? adminNoteInput : ''}
+                            onChange={(e) => {
+                              setSelectedReqId(req.id);
+                              setAdminNoteInput(e.target.value);
+                            }}
+                            className="w-full sm:flex-1 px-3 py-2 rounded-xl border border-slate-300 text-xs font-medium focus:border-[#5621bf] outline-none bg-white"
+                          />
+                          <div className="flex gap-2 shrink-0 w-full sm:w-auto">
+                            <button
+                              onClick={() => handleAdminActionRequest(req.id, 'reject')}
+                              className="flex-1 sm:flex-none px-3.5 py-2 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-700 font-extrabold text-xs transition cursor-pointer"
+                            >
+                              Reject
+                            </button>
+                            <button
+                              onClick={() => handleAdminActionRequest(req.id, 'approve')}
+                              className="flex-1 sm:flex-none px-3.5 py-2 rounded-xl bg-[#5621bf] hover:bg-[#431799] text-white font-extrabold text-xs shadow-sm transition cursor-pointer"
+                            >
+                              Approve Pro Access
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {/* 3. USER MANAGEMENT TAB */}
+            {!loadingAdminData && adminTab === 'users' && (
+              <div className="space-y-3 sm:space-y-4">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Search name, email, family code..."
+                    value={adminUserSearch}
+                    onChange={(e) => setAdminUserSearch(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && fetchAdminData('users', adminUserSearch)}
+                    className="flex-1 px-3.5 py-2 rounded-xl border border-slate-300 text-xs font-semibold focus:border-[#5621bf] outline-none bg-white"
+                  />
+                  <button
+                    onClick={() => fetchAdminData('users', adminUserSearch)}
+                    className="px-4 py-2 rounded-xl bg-[#5621bf] text-white font-extrabold text-xs shadow-xs hover:bg-[#431799] cursor-pointer shrink-0"
+                  >
+                    Search
+                  </button>
+                </div>
+
+                <div className="bg-white rounded-2xl border border-slate-200 overflow-x-auto custom-scroll shadow-xs">
+                  <table className="w-full text-left text-xs min-w-[600px]">
+                    <thead className="bg-slate-100 text-slate-600 font-black uppercase text-[10px] border-b border-slate-200">
+                      <tr>
+                        <th className="p-3">User</th>
+                        <th className="p-3">Role / Code</th>
+                        <th className="p-3">Pro Status</th>
+                        <th className="p-3">Circle Tier</th>
+                        <th className="p-3">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {adminUsers.map((u) => (
+                        <tr key={u.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="p-3 font-extrabold text-slate-900">
+                            <div>{u.name}</div>
+                            <div className="text-[10px] text-slate-400 font-normal">{u.email}</div>
+                          </td>
+                          <td className="p-3">
+                            <span className="font-bold text-slate-700">{u.role}</span>
+                            <div className="text-[10px] text-[#5621bf] font-mono font-bold">{u.family_code}</div>
+                          </td>
+                          <td className="p-3">
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
+                              u.pro_status === 'approved' ? 'bg-emerald-100 text-emerald-800' :
+                              u.pro_status === 'requested' ? 'bg-amber-100 text-amber-800' :
+                              u.pro_status === 'revoked' ? 'bg-rose-100 text-rose-800' :
+                              'bg-slate-100 text-slate-600'
+                            }`}>
+                              {u.pro_status || 'none'}
+                            </span>
+                          </td>
+                          <td className="p-3 font-black text-[#5621bf]">
+                            {u.subscription_tier === 'plus' ? 'PRO PLUS' : 'BASIC'}
+                          </td>
+                          <td className="p-3">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {u.role !== 'admin' && (
+                                u.pro_status === 'approved' ? (
+                                  <button
+                                    onClick={() => handleAdminUserAction(u.id, 'revoke_pro')}
+                                    className="px-2.5 py-1 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-700 text-[10px] font-black cursor-pointer"
+                                  >
+                                    Revoke Pro
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => handleAdminUserAction(u.id, 'grant_pro')}
+                                    className="px-2.5 py-1 rounded-xl bg-[#5621bf] hover:bg-[#431799] text-white text-[10px] font-black cursor-pointer shadow-xs"
+                                    title="Grants Pro to the Parent account so the entire family circle receives Pro access"
+                                  >
+                                    {u.role === 'parent' ? 'Grant Circle Pro' : 'Grant Circle Pro (via Parent)'}
+                                  </button>
+                                )
+                              )}
+
+                              {u.role !== 'admin' && (
+                                <button
+                                  onClick={() => handleAdminUserAction(u.id, 'set_role_admin')}
+                                  className="px-2.5 py-1 rounded-xl bg-blue-100 hover:bg-blue-200 text-blue-800 text-[10px] font-black cursor-pointer shadow-xs flex items-center gap-1"
+                                  title="Promote to Admin & strip family circle"
+                                >
+                                  <i className="fa-solid fa-user-shield text-[9px]" /> Make Admin
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* 4. MONTHLY FEEDBACK TAB */}
+            {!loadingAdminData && adminTab === 'feedback' && (
+              <div className="space-y-3 sm:space-y-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-black text-slate-900 text-xs sm:text-sm">Monthly Feedback Reviews ({adminFeedbackList.length})</h4>
+                  {adminFeedbackList.length > 0 && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setCollapsedFeedback(!collapsedFeedback)}
+                        className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black transition cursor-pointer flex items-center gap-1.5 shadow-xs"
+                      >
+                        <i className={`fa-solid ${collapsedFeedback ? 'fa-chevron-down' : 'fa-chevron-up'} text-[10px]`} />
+                        {collapsedFeedback ? 'Expand All' : 'Collapse All'}
+                      </button>
+                      <button
+                        onClick={handleClearAllFeedback}
+                        className="px-3 py-1.5 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-700 text-[10px] font-black transition cursor-pointer flex items-center gap-1.5 shadow-xs"
+                      >
+                        <i className="fa-solid fa-trash-can text-[10px]" /> Clear All Reviews
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {adminFeedbackList.length === 0 ? (
+                  <div className="p-6 sm:p-8 text-center bg-slate-50 rounded-2xl border border-slate-200 text-slate-400 text-xs font-semibold">
+                    No monthly feedback submissions found.
+                  </div>
+                ) : (
+                  adminFeedbackList.map((fb) => (
+                    <div key={fb.id} className="p-3.5 sm:p-5 rounded-2xl bg-slate-50/60 border border-slate-200 space-y-2 sm:space-y-2.5 shadow-xs">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 border-b border-slate-200 pb-2">
+                        <div className="flex flex-wrap items-center gap-1 sm:gap-2">
+                          <span className="font-black text-slate-900 text-xs sm:text-sm">{fb.user_name}</span>
+                          <span className="text-[11px] text-slate-400">({fb.user_email})</span>
+                          <span className="text-[10px] sm:text-xs font-extrabold text-[#5621bf] bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-lg">
+                            Month: {fb.month_year}
+                          </span>
+                        </div>
+                        <span className="self-start sm:self-auto text-[10px] sm:text-xs font-black text-slate-700 bg-slate-200 px-2.5 py-0.5 rounded-full">
+                          Score: {fb.recommendation_score}/10
+                        </span>
+                      </div>
+
+                      {!collapsedFeedback && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 text-xs pt-1">
+                          <div className="p-2.5 sm:p-3 rounded-xl bg-emerald-50/70 border border-emerald-100">
+                            <span className="text-[9px] sm:text-[10px] font-black uppercase text-emerald-800 block mb-0.5">What Worked Well</span>
+                            <p className="font-medium text-slate-800 leading-snug">{fb.worked_well}</p>
+                          </div>
+
+                          <div className="p-2.5 sm:p-3 rounded-xl bg-purple-50/70 border border-purple-100">
+                            <span className="text-[9px] sm:text-[10px] font-black uppercase text-purple-800 block mb-0.5">Feature Improvements / Ideas</span>
+                            <p className="font-medium text-slate-800 leading-snug">{fb.features_to_improve}</p>
+                          </div>
+
+                          {fb.problems_encountered && (
+                            <div className="p-2.5 sm:p-3 rounded-xl bg-amber-50/70 border border-amber-100 sm:col-span-2">
+                              <span className="text-[9px] sm:text-[10px] font-black uppercase text-amber-800 block mb-0.5">Bugs / Issues Reported</span>
+                              <p className="font-medium text-slate-800 leading-snug">{fb.problems_encountered}</p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen min-h-dvh flex flex-col relative overflow-x-hidden">
-      <CustomModal modal={modal} onClose={() => setModal(null)} />
+<CustomModal modal={modal} onClose={() => setModal(null)} />
 
       <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[800px] h-[350px] bg-gradient-to-b from-[#e2f0ff]/60 via-purple-100/30 to-transparent blur-3xl -z-10 pointer-events-none" />
       <WaveBackground />
@@ -1356,22 +2178,98 @@ export default function DashboardPage() {
       {renderToast()}
 
       {/* ===== Header ===== */}
-      <header className="w-full px-3 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between z-20 shrink-0">
-        <div className="flex items-center gap-1.5 sm:gap-4 shrink-0">
-          <Link href="/" className="flex items-center gap-1.5 sm:gap-2 group">
-            <Image src="/logo.png" alt="HOMETRACKER Logo" width={36} height={36} className="w-7 h-7 sm:w-9 sm:h-9 object-contain group-hover:scale-105 transition-transform duration-300" />
-            <span className="font-extrabold text-sm sm:text-lg tracking-tight text-slate-900">
+      <header className="w-full px-2.5 sm:px-6 py-2 sm:py-3 flex items-center justify-between z-[1000] shrink-0 relative bg-white/80 backdrop-blur-md border-b border-slate-200/80">
+        <div className="flex items-center gap-1 sm:gap-4 shrink-0">
+          <Link href="/" className="flex items-center gap-1 sm:gap-2 group">
+            <Image src="/logo.png" alt="HOMETRACKER Logo" width={36} height={36} className="w-6 h-6 sm:w-9 sm:h-9 object-contain group-hover:scale-105 transition-transform duration-300" />
+            <span className="font-extrabold text-xs sm:text-lg tracking-tight text-slate-900">
               HOME<span className="text-[#5621bf]">TRACKER</span>
             </span>
           </Link>
         </div>
 
-        <div className="flex items-center gap-1.5 sm:gap-2">
+        <div className="flex items-center gap-1 sm:gap-2">
+          {user?.role === 'admin' && (
+            <div className="flex items-center gap-1 sm:gap-1.5">
+              <button
+                onClick={() => {
+                  setShowAdminModal(true);
+                  setAdminTab('stats');
+                  fetchAdminData('stats');
+                }}
+                className="h-8 sm:h-10 px-2 sm:px-3 rounded-xl bg-[#5621bf] hover:bg-[#431799] text-white text-[10px] sm:text-xs font-extrabold shadow-sm transition flex items-center gap-1 sm:gap-1.5 cursor-pointer shrink-0"
+                title="Master Admin Dashboard"
+              >
+                <i className="fa-solid fa-user-gear text-white text-xs" />
+                <span className="hidden sm:inline">Admin Panel</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setShowAdminModal(true);
+                  setAdminTab('requests');
+                  fetchAdminData('requests');
+                }}
+                className="h-8 sm:h-10 px-2 sm:px-3 rounded-xl bg-white/90 border border-slate-200 text-slate-700 text-[10px] sm:text-xs font-extrabold hover:border-[#5621bf] hover:text-[#5621bf] shadow-sm transition flex items-center gap-1 sm:gap-1.5 cursor-pointer shrink-0"
+                title="Pro Beta Applications"
+              >
+                <i className="fa-solid fa-paper-plane text-xs text-[#5621bf]" />
+                <span className="hidden md:inline">Applications</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setShowAdminModal(true);
+                  setAdminTab('users');
+                  fetchAdminData('users');
+                }}
+                className="h-8 sm:h-10 px-2 sm:px-3 rounded-xl bg-white/90 border border-slate-200 text-slate-700 text-[10px] sm:text-xs font-extrabold hover:border-[#5621bf] hover:text-[#5621bf] shadow-sm transition flex items-center gap-1 sm:gap-1.5 cursor-pointer shrink-0"
+                title="User & Circle Governance"
+              >
+                <i className="fa-solid fa-users-gear text-xs text-[#5621bf]" />
+                <span className="hidden md:inline">Users &amp; Circles</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setShowAdminModal(true);
+                  setAdminTab('feedback');
+                  fetchAdminData('feedback');
+                }}
+                className="h-8 sm:h-10 px-2 sm:px-3 rounded-xl bg-white/90 border border-slate-200 text-slate-700 text-[10px] sm:text-xs font-extrabold hover:border-[#5621bf] hover:text-[#5621bf] shadow-sm transition flex items-center gap-1 sm:gap-1.5 cursor-pointer shrink-0"
+                title="Monthly Feedback Submissions"
+              >
+                <i className="fa-solid fa-comments text-xs text-[#5621bf]" />
+                <span className="hidden md:inline">Reviews</span>
+              </button>
+            </div>
+          )}
+
+          {/* Subscription Tier Badge */}
+          <button
+            onClick={() => {
+              if (!isPlusCircle) {
+                setShowProRequestModal(true);
+              } else {
+                setShowPaymentInfoModal(true);
+              }
+            }}
+            className={`h-8 sm:h-10 px-2 sm:px-3 rounded-xl border text-[10px] sm:text-xs font-black shadow-sm transition flex items-center gap-1 sm:gap-1.5 cursor-pointer shrink-0 ${
+              isPlusCircle
+                ? 'bg-[#5621bf] text-white border-purple-400'
+                : 'bg-white/80 backdrop-blur-sm text-slate-700 border-slate-200 hover:bg-white'
+            }`}
+          >
+            <i className={`fa-solid ${isPlusCircle ? 'fa-shield-halved text-white' : 'fa-shield text-[#5621bf]'} text-xs`} />
+            <span className="truncate">{isPlusCircle ? 'PRO' : 'BASIC'}</span>
+            <span className="hidden sm:inline"> MEMBER</span>
+          </button>
+
           {/* Center Home button */}
           {homeIsSet && (
-            <button onClick={centerMapOnHome} onMouseEnter={hoverScaleIn} onMouseLeave={hoverScaleOut} className="h-9 sm:h-10 px-2 sm:px-3 rounded-xl bg-white/80 backdrop-blur-sm border border-slate-200 text-slate-700 text-xs font-bold shadow-sm hover:bg-white transition flex items-center gap-1 sm:gap-1.5 cursor-pointer">
-              <i className="fa-solid fa-house text-[#5621bf] text-[11px]" />
-              <span className="hidden sm:inline">Center Home</span>
+            <button onClick={centerMapOnHome} onMouseEnter={hoverScaleIn} onMouseLeave={hoverScaleOut} className="h-8 sm:h-10 px-1.5 sm:px-3 rounded-xl bg-white/80 backdrop-blur-sm border border-slate-200 text-slate-700 text-[10px] sm:text-xs font-bold shadow-sm hover:bg-white transition flex items-center gap-1 sm:gap-1.5 cursor-pointer shrink-0">
+              <i className="fa-solid fa-house text-[#5621bf] text-[10px] sm:text-[11px]" />
+              <span className="hidden md:inline">Center Home</span>
             </button>
           )}
 
@@ -1401,8 +2299,10 @@ export default function DashboardPage() {
         <div className="w-full lg:w-[380px] xl:w-[420px] flex flex-col min-h-0 lg:order-1 lg:border-r lg:border-slate-200/60 bg-white/70 lg:bg-white/50 backdrop-blur-sm">
           <div className="flex-1 overflow-y-auto custom-scroll p-3 sm:p-4 space-y-3">
 
+
+
             {/* Child status banner */}
-            {!isParent && childStatus && (
+            {isChild && childStatus && (
               <div className={`p-3 rounded-xl border ${childStatus.isAtHome ? 'bg-emerald-50/90 border-emerald-200' : 'bg-amber-50/90 border-amber-200'}`}>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2.5">
@@ -1443,8 +2343,8 @@ export default function DashboardPage() {
                 <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
                   <i className="fa-solid fa-map-location-dot text-[#5621bf]" /> Saved Locations
                 </p>
-                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${totalSavedLocations >= 2 ? 'bg-amber-100 text-amber-800' : 'bg-purple-100 text-[#5621bf]'}`}>
-                  {totalSavedLocations} / 2 Locations
+                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${totalSavedLocations >= maxLocationsAllowed ? 'bg-amber-100 text-amber-800' : 'bg-purple-100 text-[#5621bf]'}`}>
+                  {totalSavedLocations} / {maxLocationsAllowed} Locations
                 </span>
               </div>
 
@@ -1596,45 +2496,58 @@ export default function DashboardPage() {
                 ))}
               </div>
 
-              {/* Add Location Form (Parent Only - only if under limit of 2) */}
-              {isParent && totalSavedLocations < 2 && (
-                <div className="pt-2 border-t border-slate-100 space-y-2">
-                  {showAddForm ? (
-                    <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-black uppercase text-slate-600">Add Extra Location</span>
-                        <button onClick={() => setShowAddForm(false)} className="text-[10px] font-bold text-slate-400 hover:text-slate-600 cursor-pointer">Cancel</button>
+              {/* Add Location Form (Parent Only - checks subscription limit) */}
+              {isParent && (
+                totalSavedLocations < maxLocationsAllowed ? (
+                  <div className="pt-2 border-t border-slate-100 space-y-2">
+                    {showAddForm ? (
+                      <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-black uppercase text-slate-600">Add Extra Location</span>
+                          <button onClick={() => setShowAddForm(false)} className="text-[10px] font-bold text-slate-400 hover:text-slate-600 cursor-pointer">Cancel</button>
+                        </div>
+                        <input 
+                          type="text" 
+                          value={newLocName} 
+                          onChange={(e) => setNewLocName(e.target.value)}
+                          placeholder="Name (e.g. School, Work, Gym)"
+                          className="w-full px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 focus:border-[#0d9488] outline-none bg-white"
+                        />
+                        <AddressInputWithAutocomplete
+                          value={newLocAddress}
+                          onChange={setNewLocAddress}
+                          placeholder="Search or enter Address (e.g. 100 Main St)"
+                          className="w-full px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 focus:border-[#0d9488] outline-none bg-white"
+                        />
+                        <button
+                          onClick={() => { handleAddLocation(); setShowAddForm(false); }}
+                          disabled={!newLocName.trim() || !newLocAddress.trim()}
+                          className={`w-full py-2 font-extrabold text-xs rounded-lg transition flex items-center justify-center gap-1.5 ${!newLocName.trim() || !newLocAddress.trim() ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-[#0d9488] hover:bg-[#0f766e] text-white active:scale-95 cursor-pointer shadow-sm'}`}
+                        >
+                          <i className="fa-solid fa-plus" /> Save New Location
+                        </button>
                       </div>
-                      <input 
-                        type="text" 
-                        value={newLocName} 
-                        onChange={(e) => setNewLocName(e.target.value)}
-                        placeholder="Name (e.g. School, Work, Gym)"
-                        className="w-full px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 focus:border-[#0d9488] outline-none bg-white"
-                      />
-                      <AddressInputWithAutocomplete
-                        value={newLocAddress}
-                        onChange={setNewLocAddress}
-                        placeholder="Search or enter Address (e.g. 100 Main St)"
-                        className="w-full px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 focus:border-[#0d9488] outline-none bg-white"
-                      />
+                    ) : (
                       <button
-                        onClick={() => { handleAddLocation(); setShowAddForm(false); }}
-                        disabled={!newLocName.trim() || !newLocAddress.trim()}
-                        className={`w-full py-2 font-extrabold text-xs rounded-lg transition flex items-center justify-center gap-1.5 ${!newLocName.trim() || !newLocAddress.trim() ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-[#0d9488] hover:bg-[#0f766e] text-white active:scale-95 cursor-pointer shadow-sm'}`}
+                        onClick={() => setShowAddForm(true)}
+                        className="w-full py-2 border border-dashed border-teal-300 hover:border-teal-500 bg-teal-50/50 hover:bg-teal-50 text-[#0d9488] font-extrabold text-xs rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
                       >
-                        <i className="fa-solid fa-plus" /> Save New Location
+                        <i className="fa-solid fa-plus" /> Add Location (e.g. School)
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  !isPlusCircle && (
+                    <div className="pt-2 border-t border-slate-100">
+                      <button
+                        onClick={() => setShowProRequestModal(true)}
+                        className="w-full py-2 bg-gradient-to-r from-[#5621bf]/10 to-purple-50 hover:from-[#5621bf]/20 hover:to-purple-100 border border-[#5621bf]/30 text-[#5621bf] font-extrabold text-xs rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <i className="fa-solid fa-paper-plane text-[#5621bf]" /> Location Limit Reached — Request Pro Access
                       </button>
                     </div>
-                  ) : (
-                    <button
-                      onClick={() => setShowAddForm(true)}
-                      className="w-full py-2 border border-dashed border-teal-300 hover:border-teal-500 bg-teal-50/50 hover:bg-teal-50 text-[#0d9488] font-extrabold text-xs rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <i className="fa-solid fa-plus" /> Add Location (e.g. School)
-                    </button>
-                  )}
-                </div>
+                  )
+                )
               )}
             </div>
 
@@ -1643,6 +2556,72 @@ export default function DashboardPage() {
               <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
                 <i className="fa-solid fa-users text-[#5621bf] text-[11px]" /> Family ({members.length})
               </p>
+
+              {/* Monthly Feedback Due Banner for Pro Members */}
+              {subscription?.is_plus && subscription?.feedback_due && (
+                <div className="p-3.5 rounded-2xl bg-gradient-to-r from-purple-950 via-[#5621bf] to-purple-900 text-white shadow-md space-y-2">
+                  <div className="flex items-center justify-between font-black text-xs">
+                    <span className="flex items-center gap-1.5">
+                      <i className="fa-solid fa-comments text-amber-300" />
+                      <span>Monthly Pro Review Due</span>
+                    </span>
+                    <span className="text-[9px] bg-amber-400 text-slate-950 px-2 py-0.5 rounded-full font-black uppercase">
+                      Required
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-purple-100 font-medium leading-snug">
+                    Share your experience &amp; usage insights for this month to maintain your lifetime Pro access!
+                  </p>
+                  <button
+                    onClick={() => setShowFeedbackModal(true)}
+                    className="w-full py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
+                  >
+                    <i className="fa-solid fa-paper-plane text-xs text-slate-950" /> Complete Monthly Review
+                  </button>
+                </div>
+              )}
+
+              {/* Application Pending Banner */}
+              {!subscription?.is_plus && subscription?.pro_status === 'requested' && (
+                <div className="p-3 rounded-xl bg-purple-50 border border-purple-200 text-purple-950 text-xs font-semibold space-y-1 shadow-xs">
+                  <div className="flex items-center justify-between font-black">
+                    <span className="flex items-center gap-1.5 text-[#5621bf]">
+                      <i className="fa-solid fa-hourglass-half text-purple-600" />
+                      <span>Pro Application Under Review</span>
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-purple-900 leading-tight">
+                    Your Pro Beta application is currently being reviewed by our admin team. You will receive a notification upon decision.
+                  </p>
+                </div>
+              )}
+
+              {/* Free Tier Apply Banner */}
+              {!subscription?.is_plus && subscription?.pro_status !== 'requested' && (
+                <div className="p-3 rounded-xl bg-purple-50/80 border border-purple-200/90 text-purple-900 text-xs font-semibold space-y-1.5 shadow-xs">
+                  <div className="flex items-center justify-between font-black">
+                    <span className="flex items-center gap-1.5 text-[#5621bf]">
+                      <i className="fa-solid fa-sparkles text-amber-500" />
+                      <span>HomeTracker Pro Beta Program</span>
+                    </span>
+                    <button
+                      onClick={() => setShowPaymentInfoModal(true)}
+                      className="text-[10px] font-black text-[#5621bf] underline cursor-pointer"
+                    >
+                      Rules
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-slate-700 leading-snug">
+                    Apply for lifetime Pro access in exchange for monthly product feedback!
+                  </p>
+                  <button
+                    onClick={() => setShowProRequestModal(true)}
+                    className="w-full py-1.5 bg-[#5621bf] hover:bg-[#431799] text-white font-extrabold text-[11px] rounded-lg transition flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <i className="fa-solid fa-paper-plane text-xs text-white" /> Request Pro Access
+                  </button>
+                </div>
+              )}
               {members.length === 0 ? (
                 <div className="p-4 text-center bg-slate-50 rounded-xl border border-slate-200/80 border-dashed text-slate-400 text-xs font-semibold">
                   No family members found.
@@ -1681,6 +2660,19 @@ export default function DashboardPage() {
                             <p className={`text-xs font-extrabold ${status.color}`}>{status.label}</p>
                           )}
                         </div>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); handleViewBreadcrumbs(member); }}
+                          className={`px-2 py-1 rounded-lg text-[9px] font-extrabold transition flex items-center gap-1 cursor-pointer border ${
+                            subscription?.is_plus
+                              ? 'bg-purple-100 hover:bg-purple-200 text-[#5621bf] border-purple-200'
+                              : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200'
+                          }`}
+                          title={subscription?.is_plus ? 'View 30-Day Pro Trail' : 'View 24h Trail'}
+                        >
+                          <i className="fa-solid fa-route text-[8px]" />
+                          <span>{subscription?.is_plus ? '30D Trail' : '24h Trail'}</span>
+                        </button>
                         {isParent && !mp && (
                           <button onClick={(e) => { e.stopPropagation(); handleKickMember(member); }} className="w-6 h-6 rounded-md bg-slate-100 hover:bg-rose-100 text-slate-400 hover:text-rose-600 flex items-center justify-center transition-colors cursor-pointer shrink-0" title="Remove Member">
                             <i className="fa-solid fa-xmark text-xs" />
@@ -1696,6 +2688,869 @@ export default function DashboardPage() {
           </div>
         </div>
       </main>
+
+      {/* ============================================================ */}
+      {/* 1. HOMETRACKER PRO BETA REQUEST MODAL                         */}
+      {/* ============================================================ */}
+      {showProRequestModal && !subscription?.is_plus && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl border border-slate-200 relative space-y-4 max-h-[90vh] overflow-y-auto">
+            <button
+              onClick={() => setShowProRequestModal(false)}
+              className="absolute top-4 right-4 w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center transition-colors cursor-pointer"
+            >
+              <i className="fa-solid fa-xmark text-sm" />
+            </button>
+
+            <div className="text-center">
+              <span className="px-3.5 py-1 rounded-full bg-purple-100 text-[#5621bf] text-[10px] font-black uppercase tracking-wider">
+                Community Beta Program
+              </span>
+              <h3 className="text-2xl font-black text-slate-900 mt-2">Request HomeTracker Pro Access</h3>
+              <p className="text-xs text-slate-500 font-medium mt-1">
+                Apply for lifetime Pro access for your family circle in exchange for monthly product feedback.
+              </p>
+            </div>
+
+            {/* Explanatory Callout Banner */}
+            <div className="p-3.5 rounded-2xl bg-purple-50 border border-purple-200 text-purple-950 space-y-1.5">
+              <div className="flex items-center gap-2 font-black text-xs text-[#5621bf]">
+                <i className="fa-solid fa-hand-holding-heart text-sm" />
+                <span>Community Partnership Model</span>
+              </div>
+              <p className="text-[11px] text-purple-900 font-semibold leading-relaxed">
+                HomeTracker Pro is currently provided to selected families who help improve the platform. Instead of paying, Pro members contribute monthly feedback and usage insights.
+              </p>
+            </div>
+
+            {/* Request Form */}
+            <form onSubmit={handleSubmitProRequest} className="space-y-3.5 text-xs">
+              <div>
+                <label className="block font-black text-slate-700 mb-1">
+                  Family Size (Members using phones)
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={proReqFamilySize}
+                  onChange={(e) => setProReqFamilySize(e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 font-bold focus:border-[#5621bf] outline-none"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block font-black text-slate-700 mb-1">
+                  Why do you want HomeTracker Pro access? <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  rows={2}
+                  value={proReqWhyPro}
+                  onChange={(e) => setProReqWhyPro(e.target.value)}
+                  placeholder="Tell us about your family and how HomeTracker fits into your daily routine..."
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 font-medium focus:border-[#5621bf] outline-none"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block font-black text-slate-700 mb-1">
+                  What specific problems do you want HomeTracker to solve? <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  rows={2}
+                  value={proReqProblems}
+                  onChange={(e) => setProReqProblems(e.target.value)}
+                  placeholder="e.g. Knowing when kids arrive at school, traffic ETAs, evening curfews..."
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 font-medium focus:border-[#5621bf] outline-none"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block font-black text-slate-700 mb-1">
+                  Which Pro features are most valuable to your family?
+                </label>
+                <input
+                  type="text"
+                  value={proReqFeatures}
+                  onChange={(e) => setProReqFeatures(e.target.value)}
+                  placeholder="e.g. Dynamic ETAs, 10 member limit, 50 places, 30-day trail"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 font-medium focus:border-[#5621bf] outline-none"
+                />
+              </div>
+
+              {/* Rules Footer */}
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-[10px] text-slate-500 leading-relaxed">
+                <span className="font-bold text-slate-700 block mb-0.5">📜 Pro Access Rules:</span>
+                HomeTracker Pro members receive lifetime access in exchange for monthly feedback. All feedback submissions are reviewed. If a user repeatedly submits incomplete or fake feedback, Pro access may be revoked after notification.
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowProRequestModal(false)}
+                  className="w-1/3 py-3 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingProReq}
+                  className="w-2/3 py-3 rounded-2xl bg-[#5621bf] hover:bg-[#431799] text-white font-extrabold text-xs shadow-md transition cursor-pointer flex items-center justify-center gap-2"
+                >
+                  {submittingProReq ? (
+                    <i className="fa-solid fa-spinner animate-spin text-sm" />
+                  ) : (
+                    <>
+                      <i className="fa-solid fa-paper-plane text-xs text-white" /> Submit Pro Application
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================ */}
+      {/* 2. DEACTIVATED MEMBER (PRO REVOKED / CAPACITY EXCEEDED) MODAL*/}
+      {/* ============================================================ */}
+      {(user?.is_deactivated || subscription?.user_is_deactivated) && (
+        <div className="fixed inset-0 z-[9999999] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white/95 backdrop-blur-2xl rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border-2 border-rose-500/80 relative space-y-5 text-center">
+            <div className="w-16 h-16 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto text-3xl shadow-sm">
+              <i className="fa-solid fa-user-slash" />
+            </div>
+            <span className="px-3.5 py-1 rounded-full bg-rose-100 text-rose-950 text-[10px] font-black uppercase tracking-wider">
+              Circle Capacity Limit
+            </span>
+            <h3 className="text-2xl font-black text-slate-900">
+              Access <span className="text-rose-600 underline decoration-rose-400 decoration-4 underline-offset-4">Paused</span>
+            </h3>
+            <p className="text-xs text-slate-600 font-semibold leading-relaxed">
+              Your family circle returned to the Basic Plan (4 members limit). Because your circle exceeds 4 members, your slot has been temporarily paused.
+            </p>
+
+            {/* 1-Week Grace Window Callout */}
+            <div className="p-4 rounded-2xl bg-gradient-to-br from-purple-50 to-indigo-50 border border-purple-200 text-left space-y-2 text-xs text-purple-950 font-medium shadow-xs">
+              <div className="font-black text-purple-900 flex items-center gap-1.5 text-xs">
+                <i className="fa-solid fa-link text-purple-600" /> Linked to Circle: <span className="font-mono bg-purple-100 px-1.5 py-0.5 rounded text-purple-900">{user?.family_code || subscription?.family_code}</span>
+              </div>
+              <p className="text-[11px] text-purple-800 leading-relaxed">
+                You remain linked to your family circle! If your circle parent upgrades back to <strong>HomeTracker Pro within 1 week (7 days)</strong>, your active membership will be automatically restored without losing any history.
+              </p>
+              <div className="mt-1 px-3 py-1.5 rounded-xl bg-purple-200/70 text-purple-950 font-black text-[11px] flex items-center gap-1.5">
+                <i className="fa-solid fa-clock text-purple-700" />
+                Grace Period: Rejoin automatically upon Pro upgrade
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2 pt-2">
+              <button
+                type="button"
+                onClick={handleRemindParentUpgrade}
+                disabled={sendingUpgradeRemind}
+                className="w-full py-3 px-4 rounded-2xl bg-[#5621bf] hover:bg-[#431799] text-white font-black text-xs transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <i className="fa-solid fa-bolt text-amber-300" />
+                {upgradeRemindSent ? 'Upgrade Reminder Sent to Parent!' : sendingUpgradeRemind ? 'Sending Reminder...' : 'Remind Parent to Upgrade to Pro'}
+              </button>
+              <button
+                type="button"
+                onClick={refreshData}
+                className="w-full py-2.5 px-4 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <i className="fa-solid fa-rotate-right" /> Check Status / Refresh
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================ */}
+      {/* 3. BLOCKING MONTHLY PRO FEEDBACK REVIEW OVERLAY               */}
+      {/* ============================================================ */}
+      {subscription?.is_plus && subscription?.feedback_due && !user?.is_deactivated && !subscription?.user_is_deactivated && (
+        <div className="fixed inset-0 z-[999999] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+          {user?.role === 'parent' ? (
+            /* PARENT FEEDBACK FORM */
+            <div className="bg-white/95 backdrop-blur-2xl rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl border-2 border-[#5621bf] relative space-y-4 max-h-[92vh] overflow-y-auto">
+              <div className="text-center">
+                <div className="w-14 h-14 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center mx-auto text-2xl mb-2 shadow-sm">
+                  <i className="fa-solid fa-lock" />
+                </div>
+                <span className="px-3.5 py-1 rounded-full bg-amber-100 text-amber-950 text-[10px] font-black uppercase tracking-wider">
+                  Parent Action Required
+                </span>
+                <h3 className="text-2xl font-black text-slate-900 mt-2">
+                  Monthly Review <span className="underline decoration-[#5621bf] decoration-4 underline-offset-4">Required</span>
+                </h3>
+                <p className="text-xs text-slate-600 font-semibold mt-1 leading-relaxed">
+                  Your family circle map is temporarily blocked until your monthly product review is submitted. Share your usage feedback below to unblock access &amp; preserve lifetime Pro access.
+                </p>
+              </div>
+
+              <form onSubmit={handleSubmitFeedback} className="space-y-3.5 text-xs">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-black text-slate-700 mb-1">Times used this month?</label>
+                    <select
+                      value={fbTimesUsed}
+                      onChange={(e) => setFbTimesUsed(e.target.value)}
+                      className="w-full px-3 py-2.5 rounded-2xl border border-slate-200/90 font-bold focus:border-[#5621bf] focus:ring-2 focus:ring-[#5621bf]/20 outline-none bg-slate-50/50"
+                    >
+                      <option value="1-5 times">1-5 times</option>
+                      <option value="5-15 times">5-15 times</option>
+                      <option value="15-30 times">15-30 times</option>
+                      <option value="Daily (30+ times)">Daily (30+ times)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-black text-slate-700 mb-1">Members using app?</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="10"
+                      value={fbMembersUsed}
+                      onChange={(e) => setFbMembersUsed(e.target.value)}
+                      className="w-full px-3 py-2.5 rounded-2xl border border-slate-200/90 font-bold focus:border-[#5621bf] focus:ring-2 focus:ring-[#5621bf]/20 outline-none bg-slate-50/50"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block font-black text-slate-700 mb-1">What situations did you use HomeTracker for?</label>
+                  <input
+                    type="text"
+                    value={fbSituations}
+                    onChange={(e) => setFbSituations(e.target.value)}
+                    placeholder="e.g. School dismissal check, weekend curfews, road trip tracking..."
+                    className="w-full px-3 py-2.5 rounded-2xl border border-slate-200/90 font-medium focus:border-[#5621bf] focus:ring-2 focus:ring-[#5621bf]/20 outline-none bg-slate-50/50"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-black text-slate-700 mb-1">
+                    What worked well this month? <span className="text-rose-500">*</span>
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={fbWorkedWell}
+                    onChange={(e) => setFbWorkedWell(e.target.value)}
+                    placeholder="Share features or UI aspects that performed great for your family..."
+                    className="w-full px-3 py-2.5 rounded-2xl border border-slate-200/90 font-medium focus:border-[#5621bf] focus:ring-2 focus:ring-[#5621bf]/20 outline-none bg-slate-50/50"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-black text-slate-700 mb-1">Did any feature fail or behave unexpectedly?</label>
+                  <textarea
+                    rows={2}
+                    value={fbProblems}
+                    onChange={(e) => setFbProblems(e.target.value)}
+                    placeholder="Describe any bugs, delayed notifications, or unexpected behaviors..."
+                    className="w-full px-3 py-2.5 rounded-2xl border border-slate-200/90 font-medium focus:border-[#5621bf] focus:ring-2 focus:ring-[#5621bf]/20 outline-none bg-slate-50/50"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-black text-slate-700 mb-1">
+                    What new feature or improvement would help your family most? <span className="text-rose-500">*</span>
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={fbImprovement}
+                    onChange={(e) => setFbImprovement(e.target.value)}
+                    placeholder="Your feature requests directly enter our engineering sprint..."
+                    className="w-full px-3 py-2.5 rounded-2xl border border-slate-200/90 font-medium focus:border-[#5621bf] focus:ring-2 focus:ring-[#5621bf]/20 outline-none bg-slate-50/50"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-black text-slate-700 mb-1">How likely are you to recommend HomeTracker (1-10)?</label>
+                  <div className="flex gap-1 justify-between">
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((score) => (
+                      <button
+                        key={score}
+                        type="button"
+                        onClick={() => setFbRecScore(score)}
+                        className={`flex-1 py-1.5 rounded-xl text-xs font-black transition cursor-pointer border ${
+                          fbRecScore === score
+                            ? 'bg-[#5621bf] text-white border-[#5621bf]'
+                            : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        {score}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={submittingFb}
+                  className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-[#5621bf] to-indigo-600 hover:from-[#431799] hover:to-indigo-700 text-white font-black text-sm shadow-lg shadow-purple-500/25 transition-all cursor-pointer flex items-center justify-center gap-2"
+                >
+                  {submittingFb ? (
+                    <i className="fa-solid fa-spinner animate-spin text-sm" />
+                  ) : (
+                    <>
+                      <i className="fa-solid fa-unlock text-xs text-amber-300" /> Submit Review &amp; Unblock Circle
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handlePostponeFeedback}
+                  className="w-full py-2.5 rounded-2xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-2 mt-2"
+                >
+                  <i className="fa-solid fa-clock-rotate-left text-amber-700" /> Emergency Postpone (1 Day) — Reverts to Basic for 24 hrs
+                </button>
+              </form>
+            </div>
+          ) : (
+            /* CHILD / TEEN WAITING MODAL */
+            <div className="bg-white/95 backdrop-blur-2xl rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border-2 border-amber-500/80 relative space-y-5 text-center">
+              <div className="w-16 h-16 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center mx-auto text-3xl shadow-sm animate-pulse">
+                <i className="fa-solid fa-hourglass-half" />
+              </div>
+              <span className="px-3.5 py-1 rounded-full bg-amber-100 text-amber-950 text-[10px] font-black uppercase tracking-wider">
+                Parent Action Required
+              </span>
+              <h3 className="text-2xl font-black text-slate-900">
+                Monthly Review <span className="text-amber-600 underline decoration-amber-400 decoration-4 underline-offset-4">Pending</span>
+              </h3>
+              <p className="text-xs text-slate-600 font-semibold leading-relaxed">
+                Your family circle's monthly HomeTracker Pro survey is currently active. Only parent accounts can complete this review. Please ask your circle parent to complete the review to unblock access!
+              </p>
+              <div className="p-4 rounded-2xl bg-amber-50/80 border border-amber-200/80 text-left space-y-1.5 text-xs text-amber-900 font-medium">
+                <div className="font-black text-amber-950 flex items-center gap-1.5">
+                  <i className="fa-solid fa-circle-info text-amber-600" /> Instructions:
+                </div>
+                <p className="text-[11px] text-amber-800">
+                  1. Remind your circle parent to open HomeTracker on their device.
+                </p>
+                <p className="text-[11px] text-amber-800">
+                  2. Once your parent submits the 1-minute feedback survey, your circle features will unblock automatically.
+                </p>
+              </div>
+              <div className="flex flex-col gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={handleRemindParentSurvey}
+                  disabled={sendingSurveyRemind}
+                  className="w-full py-3 px-4 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-black text-xs transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <i className="fa-solid fa-paper-plane" />
+                  {surveyRemindSent ? 'Reminder Sent to Parent!' : sendingSurveyRemind ? 'Sending Reminder...' : 'Remind Parent to Complete Survey'}
+                </button>
+                <button
+                  type="button"
+                  onClick={refreshData}
+                  className="w-full py-2.5 px-4 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <i className="fa-solid fa-rotate-right" /> Check Status / Refresh
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Non-blocking feedback modal fallback */}
+      {showFeedbackModal && !subscription?.feedback_due && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl border border-slate-100 relative space-y-4 max-h-[90vh] overflow-y-auto">
+            <button
+              onClick={() => setShowFeedbackModal(false)}
+              className="absolute top-4 right-4 w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center transition-colors cursor-pointer"
+            >
+              <i className="fa-solid fa-xmark text-sm" />
+            </button>
+
+            <div className="text-center">
+              <span className="px-3.5 py-1 rounded-full bg-purple-100 text-[#5621bf] text-[10px] font-black uppercase tracking-wider">
+                Pro Beta Feedback
+              </span>
+              <h3 className="text-2xl font-black text-slate-900 mt-2">
+                Monthly Product <span className="underline decoration-[#5621bf] decoration-2 underline-offset-4">Review</span>
+              </h3>
+            </div>
+
+            <form onSubmit={handleSubmitFeedback} className="space-y-3.5 text-xs">
+              <div>
+                <label className="block font-black text-slate-700 mb-1">What worked well this month? *</label>
+                <textarea
+                  rows={2}
+                  value={fbWorkedWell}
+                  onChange={(e) => setFbWorkedWell(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 font-medium focus:border-[#5621bf] outline-none"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block font-black text-slate-700 mb-1">Feature improvements or ideas? *</label>
+                <textarea
+                  rows={2}
+                  value={fbImprovement}
+                  onChange={(e) => setFbImprovement(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 font-medium focus:border-[#5621bf] outline-none"
+                  required
+                />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowFeedbackModal(false)}
+                  className="w-1/3 py-3 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs transition cursor-pointer"
+                >
+                  Close
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingFb}
+                  className="w-2/3 py-3 rounded-2xl bg-[#5621bf] text-white font-black text-xs shadow-md transition cursor-pointer"
+                >
+                  Submit Feedback
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================ */}
+      {/* 3. ADMIN MANAGEMENT CONTROL PANEL MODAL                      */}
+      {/* ============================================================ */}
+      {showAdminModal && user?.role === 'admin' && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/70 backdrop-blur-md p-3 sm:p-6 animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl w-full max-w-5xl h-[88vh] shadow-2xl border border-slate-200 flex flex-col overflow-hidden relative">
+            
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-900 text-white shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-[#5621bf] text-white flex items-center justify-center text-base shadow-sm">
+                  <i className="fa-solid fa-user-gear" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black tracking-tight flex items-center gap-2">
+                    <span>HomeTracker Admin System</span>
+                    <span className="text-[10px] bg-blue-500 text-white px-2 py-0.5 rounded-full font-black uppercase tracking-wider">
+                      Admin
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-slate-300 font-semibold">Beta Access Governance &amp; Community Product Reviews</p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setShowAdminModal(false)}
+                className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition-colors cursor-pointer"
+              >
+                <i className="fa-solid fa-xmark text-sm" />
+              </button>
+            </div>
+
+            {/* Clean Navigation Tabs */}
+            <div className="bg-slate-100/80 px-6 py-2 border-b border-slate-200 flex gap-2 overflow-x-auto shrink-0">
+              <button
+                onClick={() => { setAdminTab('stats'); fetchAdminData('stats'); }}
+                className={`px-4 py-2 rounded-xl font-extrabold text-xs transition cursor-pointer flex items-center gap-1.5 ${
+                  adminTab === 'stats' ? 'bg-[#5621bf] text-white shadow-xs' : 'text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <i className="fa-solid fa-chart-pie" /> Overview Stats
+              </button>
+
+              <button
+                onClick={() => { setAdminTab('requests'); fetchAdminData('requests'); }}
+                className={`px-4 py-2 rounded-xl font-extrabold text-xs transition cursor-pointer flex items-center gap-1.5 ${
+                  adminTab === 'requests' ? 'bg-[#5621bf] text-white shadow-xs' : 'text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <i className="fa-solid fa-paper-plane" /> Pro Requests
+                {adminStats?.pending_requests > 0 && (
+                  <span className="bg-[#5621bf] text-white text-[10px] font-black px-2 py-0.5 rounded-full">
+                    {adminStats.pending_requests}
+                  </span>
+                )}
+              </button>
+
+              <button
+                onClick={() => { setAdminTab('users'); fetchAdminData('users'); }}
+                className={`px-4 py-2 rounded-xl font-extrabold text-xs transition cursor-pointer flex items-center gap-1.5 ${
+                  adminTab === 'users' ? 'bg-[#5621bf] text-white shadow-xs' : 'text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <i className="fa-solid fa-users" /> User &amp; Circle Management
+              </button>
+
+              <button
+                onClick={() => { setAdminTab('feedback'); fetchAdminData('feedback'); }}
+                className={`px-4 py-2 rounded-xl font-extrabold text-xs transition cursor-pointer flex items-center gap-1.5 ${
+                  adminTab === 'feedback' ? 'bg-[#5621bf] text-white shadow-xs' : 'text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <i className="fa-solid fa-comments" /> Monthly Reviews
+              </button>
+            </div>
+
+            {/* Tab Body Content */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-slate-50/50 custom-scroll">
+              {loadingAdminData && (
+                <div className="flex justify-center items-center py-12 text-[#5621bf]">
+                  <i className="fa-solid fa-spinner animate-spin text-3xl" />
+                </div>
+              )}
+
+              {/* 1. OVERVIEW STATS TAB */}
+              {!loadingAdminData && adminTab === 'stats' && adminStats && (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                    <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs text-center space-y-1">
+                      <p className="text-[10px] font-black uppercase text-slate-400">Total Users</p>
+                      <p className="text-2xl font-black text-slate-900">{adminStats.total_users}</p>
+                    </div>
+                    <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs text-center space-y-1">
+                      <p className="text-[10px] font-black uppercase text-slate-400">Free Users</p>
+                      <p className="text-2xl font-black text-slate-700">{adminStats.free_users}</p>
+                    </div>
+                    <div className="p-4 rounded-2xl bg-purple-50 border border-purple-200 shadow-xs text-center space-y-1">
+                      <p className="text-[10px] font-black uppercase text-[#5621bf]">Pro Beta Members</p>
+                      <p className="text-2xl font-black text-[#5621bf]">{adminStats.pro_users}</p>
+                    </div>
+                    <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 shadow-xs text-center space-y-1">
+                      <p className="text-[10px] font-black uppercase text-amber-800">Pending Requests</p>
+                      <p className="text-2xl font-black text-amber-900">{adminStats.pending_requests}</p>
+                    </div>
+                    <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 shadow-xs text-center space-y-1">
+                      <p className="text-[10px] font-black uppercase text-emerald-800">Feedback Reviews</p>
+                      <p className="text-2xl font-black text-emerald-900">{adminStats.total_feedback}</p>
+                    </div>
+                    <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs text-center space-y-1">
+                      <p className="text-[10px] font-black uppercase text-slate-400">Family Circles</p>
+                      <p className="text-2xl font-black text-slate-900">{adminStats.total_circles}</p>
+                    </div>
+                  </div>
+
+                  <div className="p-5 rounded-3xl bg-gradient-to-r from-purple-50 via-white to-purple-50 border border-purple-200/80 space-y-3 shadow-xs">
+                    <h4 className="font-black text-slate-900 text-sm flex items-center gap-2">
+                      <i className="fa-solid fa-shield-halved text-[#5621bf]" />
+                      <span className="underline decoration-[#5621bf] decoration-2 underline-offset-4">Pro Beta Governance Principles</span>
+                    </h4>
+                    <ul className="text-xs text-slate-600 space-y-2 leading-relaxed">
+                      <li>• <strong>Community Partnership:</strong> Pro Beta members receive lifetime access in exchange for active monthly product feedback.</li>
+                      <li>• <strong>Fair Evaluation:</strong> Review why applicants want Pro access and their intended family setup.</li>
+                      <li>• <strong>Quality Enforcement:</strong> Users who repeatedly submit empty or fake feedback can have Pro access revoked by Admins.</li>
+                    </ul>
+                  </div>
+                </div>
+              )}
+
+              {/* 2. PRO REQUESTS TAB */}
+              {!loadingAdminData && adminTab === 'requests' && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-black text-slate-900 text-sm border-b-2 border-[#5621bf] pb-1">
+                      Pro Beta Applications ({adminRequests.length})
+                    </h4>
+                  </div>
+
+                  {adminRequests.length === 0 ? (
+                    <div className="p-8 text-center bg-white rounded-3xl border border-slate-200 text-slate-400 text-xs font-semibold">
+                      No Pro applications found.
+                    </div>
+                  ) : (
+                    adminRequests.map((req) => (
+                      <div key={req.id} className="p-5 rounded-3xl bg-white border border-purple-100 space-y-3 shadow-xs hover:border-[#5621bf]/40 transition-all">
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+                          <div>
+                            <span className="text-sm font-black text-slate-900">{req.user_name}</span>
+                            <span className="text-xs text-slate-400 font-semibold ml-2">({req.email})</span>
+                            <span className="text-xs font-black text-[#5621bf] bg-purple-50 border border-purple-200 px-2.5 py-0.5 rounded-lg ml-2">
+                              Code: {req.family_code}
+                            </span>
+                          </div>
+                          <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${
+                            req.status === 'approved' ? 'bg-emerald-100 text-emerald-800' :
+                            req.status === 'rejected' ? 'bg-rose-100 text-rose-800' :
+                            'bg-amber-100 text-amber-900'
+                          }`}>
+                            {req.status}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                          <div className="p-3 rounded-2xl bg-slate-50/80 border border-slate-200/70 space-y-1">
+                            <span className="text-[10px] font-black text-slate-400 uppercase">Family Size</span>
+                            <p className="font-bold text-slate-800">{req.family_size} Members</p>
+                          </div>
+                          <div className="p-3 rounded-2xl bg-slate-50/80 border border-slate-200/70 space-y-1 sm:col-span-2">
+                            <span className="text-[10px] font-black text-slate-400 uppercase">Why Pro Wanted</span>
+                            <p className="font-medium text-slate-800">{req.why_pro}</p>
+                          </div>
+                          <div className="p-3 rounded-2xl bg-slate-50/80 border border-slate-200/70 space-y-1 sm:col-span-3">
+                            <span className="text-[10px] font-black text-slate-400 uppercase">Problems To Solve</span>
+                            <p className="font-medium text-slate-800">{req.problems_to_solve}</p>
+                          </div>
+                        </div>
+
+                        {req.status === 'pending' && (
+                          <div className="pt-2 flex flex-col sm:flex-row gap-2 items-center">
+                            <input
+                              type="text"
+                              placeholder="Admin Notes / Rationale (optional)..."
+                              value={selectedReqId === req.id ? adminNoteInput : ''}
+                              onChange={(e) => {
+                                setSelectedReqId(req.id);
+                                setAdminNoteInput(e.target.value);
+                              }}
+                              className="w-full sm:flex-1 px-3.5 py-2 rounded-2xl border border-slate-300 text-xs font-medium focus:border-[#5621bf] outline-none"
+                            />
+                            <div className="flex gap-2 shrink-0 w-full sm:w-auto">
+                              <button
+                                onClick={() => handleAdminActionRequest(req.id, 'reject')}
+                                className="flex-1 sm:flex-none px-4 py-2 rounded-2xl bg-rose-100 hover:bg-rose-200 text-rose-700 font-extrabold text-xs transition cursor-pointer"
+                              >
+                                Reject
+                              </button>
+                              <button
+                                onClick={() => handleAdminActionRequest(req.id, 'approve')}
+                                className="flex-1 sm:flex-none px-4 py-2 rounded-2xl bg-[#5621bf] hover:bg-[#431799] text-white font-extrabold text-xs shadow-md transition cursor-pointer"
+                              >
+                                Approve Lifetime Pro Access
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {/* 3. USER MANAGEMENT TAB */}
+              {!loadingAdminData && adminTab === 'users' && (
+                <div className="space-y-4">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="Search users by name, email, family code..."
+                      value={adminUserSearch}
+                      onChange={(e) => setAdminUserSearch(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && fetchAdminData('users', adminUserSearch)}
+                      className="flex-1 px-4 py-2.5 rounded-2xl border border-slate-300 text-xs font-semibold focus:border-[#5621bf] outline-none bg-white shadow-xs"
+                    />
+                    <button
+                      onClick={() => fetchAdminData('users', adminUserSearch)}
+                      className="px-5 py-2.5 rounded-2xl bg-[#5621bf] text-white font-extrabold text-xs shadow-md hover:bg-[#431799] cursor-pointer"
+                    >
+                      Search
+                    </button>
+                  </div>
+
+                  <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-purple-50/80 text-purple-900 font-black uppercase text-[10px] border-b border-purple-100">
+                        <tr>
+                          <th className="p-3.5">User</th>
+                          <th className="p-3.5">Role / Code</th>
+                          <th className="p-3.5">Pro Status</th>
+                          <th className="p-3.5">Circle Tier</th>
+                          <th className="p-3.5">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {adminUsers.map((u) => (
+                          <tr key={u.id} className="hover:bg-purple-50/30 transition-colors">
+                            <td className="p-3.5 font-extrabold text-slate-900">
+                              <div>{u.name}</div>
+                              <div className="text-[10px] text-slate-400 font-normal">{u.email}</div>
+                            </td>
+                            <td className="p-3.5">
+                              <span className="font-bold text-slate-700">{u.role}</span>
+                              <div className="text-[10px] text-[#5621bf] font-mono font-bold">{u.family_code}</div>
+                            </td>
+                            <td className="p-3.5">
+                              <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                                u.pro_status === 'approved' ? 'bg-emerald-100 text-emerald-800' :
+                                u.pro_status === 'requested' ? 'bg-amber-100 text-amber-800' :
+                                u.pro_status === 'revoked' ? 'bg-rose-100 text-rose-800' :
+                                'bg-slate-100 text-slate-600'
+                              }`}>
+                                {u.pro_status || 'none'}
+                              </span>
+                            </td>
+                            <td className="p-3.5 font-black text-[#5621bf]">
+                              {u.subscription_tier === 'plus' ? 'PRO PLUS' : 'BASIC'}
+                            </td>
+                            <td className="p-3.5">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {u.pro_status === 'approved' ? (
+                                  <button
+                                    onClick={() => handleAdminUserAction(u.id, 'revoke_pro')}
+                                    className="px-2.5 py-1 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-700 text-[10px] font-black cursor-pointer"
+                                  >
+                                    Revoke Pro
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => handleAdminUserAction(u.id, 'grant_pro')}
+                                    className="px-2.5 py-1 rounded-xl bg-[#5621bf] hover:bg-[#431799] text-white text-[10px] font-black cursor-pointer shadow-xs"
+                                  >
+                                    Grant Pro
+                                  </button>
+                                )}
+
+                                {u.role !== 'admin' && (
+                                  <button
+                                    onClick={() => handleAdminUserAction(u.id, 'set_role_admin')}
+                                    className="px-2.5 py-1 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-[10px] font-black cursor-pointer shadow-xs flex items-center gap-1"
+                                    title="Promote to Admin & strip family circle"
+                                  >
+                                    <i className="fa-solid fa-user-shield text-[9px]" /> Make Admin
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* 4. MONTHLY FEEDBACK TAB */}
+              {!loadingAdminData && adminTab === 'feedback' && (
+                <div className="space-y-4">
+                  <h4 className="font-black text-slate-900 text-sm border-b-2 border-[#5621bf] pb-1">
+                    Monthly Feedback Reviews ({adminFeedbackList.length})
+                  </h4>
+
+                  {adminFeedbackList.length === 0 ? (
+                    <div className="p-8 text-center bg-white rounded-3xl border border-slate-200 text-slate-400 text-xs font-semibold">
+                      No monthly feedback submissions found.
+                    </div>
+                  ) : (
+                    adminFeedbackList.map((fb) => (
+                      <div key={fb.id} className="p-5 rounded-3xl bg-white border border-purple-100 space-y-2.5 shadow-xs">
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                          <div>
+                            <span className="font-black text-slate-900 text-sm">{fb.user_name}</span>
+                            <span className="text-xs text-slate-400 ml-2">({fb.user_email})</span>
+                            <span className="text-xs font-extrabold text-[#5621bf] bg-purple-50 px-2.5 py-0.5 rounded-lg ml-2">
+                              Month: {fb.month_year}
+                            </span>
+                          </div>
+                          <span className="text-xs font-black text-amber-600 bg-amber-50 border border-amber-200 px-3 py-0.5 rounded-full">
+                            Score: {fb.recommendation_score}/10
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs pt-1">
+                          <div className="p-3 rounded-2xl bg-emerald-50/70 border border-emerald-100">
+                            <span className="text-[10px] font-black uppercase text-emerald-800 block mb-0.5">What Worked Well</span>
+                            <p className="font-medium text-slate-800 leading-relaxed">{fb.worked_well}</p>
+                          </div>
+
+                          <div className="p-3 rounded-2xl bg-purple-50/70 border border-purple-100">
+                            <span className="text-[10px] font-black uppercase text-purple-800 block mb-0.5">Feature Improvements / Ideas</span>
+                            <p className="font-medium text-slate-800 leading-relaxed">{fb.features_to_improve}</p>
+                          </div>
+
+                          {fb.problems_encountered && (
+                            <div className="p-3 rounded-2xl bg-amber-50/70 border border-amber-100 sm:col-span-2">
+                              <span className="text-[10px] font-black uppercase text-amber-800 block mb-0.5">Bugs / Issues Reported</span>
+                              <p className="font-medium text-slate-800 leading-relaxed">{fb.problems_encountered}</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pro Beta Rules Info Modal */}
+      {showPaymentInfoModal && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-100 relative space-y-4 max-h-[90vh] overflow-y-auto">
+            <button
+              onClick={() => setShowPaymentInfoModal(false)}
+              className="absolute top-4 right-4 w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center transition-colors cursor-pointer"
+            >
+              <i className="fa-solid fa-xmark text-sm" />
+            </button>
+
+            <div className="text-center">
+              <div className="w-12 h-12 rounded-2xl bg-purple-100 text-[#5621bf] flex items-center justify-center mx-auto text-xl mb-2">
+                <i className="fa-solid fa-shield-halved" />
+              </div>
+              <h3 className="text-xl font-black text-slate-900">
+                Pro Beta Program <span className="underline decoration-[#5621bf] decoration-2 underline-offset-4">Rules</span>
+              </h3>
+              <p className="text-xs text-slate-500 font-medium mt-1">
+                HomeTracker Pro is provided to selected users who help improve the platform through monthly feedback reviews.
+              </p>
+            </div>
+
+            <div className="space-y-3 text-xs text-slate-700">
+              <div className="flex gap-3 items-start">
+                <div className="w-7 h-7 rounded-xl bg-purple-100 text-[#5621bf] flex items-center justify-center shrink-0 mt-0.5">
+                  <i className="fa-solid fa-paper-plane text-xs" />
+                </div>
+                <div>
+                  <p className="font-extrabold text-slate-900">Application &amp; Manual Review</p>
+                  <p className="text-slate-500 text-[11px] leading-relaxed">
+                    Users submit a request form explaining their family setup. Applications are reviewed manually by our admin team.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex gap-3 items-start">
+                <div className="w-7 h-7 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0 mt-0.5">
+                  <i className="fa-solid fa-comments text-xs" />
+                </div>
+                <div>
+                  <p className="font-extrabold text-slate-900">Monthly Product Review Requirement</p>
+                  <p className="text-slate-500 text-[11px] leading-relaxed">
+                    Every Pro user completes a quick monthly survey. Your map is temporarily paused when a review is due until completed.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex gap-3 items-start">
+                <div className="w-7 h-7 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 mt-0.5">
+                  <i className="fa-solid fa-triangle-exclamation text-amber-600 text-sm" />
+                </div>
+                <div>
+                  <p className="font-extrabold text-slate-900">Access &amp; Quality Guidelines</p>
+                  <p className="text-slate-500 text-[11px] leading-relaxed">
+                    All feedback submissions are reviewed. If a user repeatedly submits incomplete or fake feedback, Pro access may be revoked after notice.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={() => { setShowPaymentInfoModal(false); setShowProRequestModal(true); }}
+              className="w-full py-3 rounded-2xl bg-[#5621bf] hover:bg-[#431799] text-white font-extrabold text-xs shadow-md transition cursor-pointer flex items-center justify-center gap-1.5"
+            >
+              <i className="fa-solid fa-paper-plane text-xs text-white" /> Request Pro Access
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

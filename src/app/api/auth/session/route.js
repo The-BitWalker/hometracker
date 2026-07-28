@@ -19,6 +19,9 @@ export async function GET(request) {
       email: user.email,
       role: user.role,
       family_code: user.family_code,
+      is_deactivated: Boolean(user.is_deactivated),
+      pro_status: user.pro_status || 'none',
+      deactivated_at: user.deactivated_at || null,
     },
   });
 }

@@ -103,12 +103,118 @@ export async function ensureSchema() {
       )
     `);
 
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS location_history (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        family_code TEXT NOT NULL,
+        lat REAL NOT NULL,
+        lng REAL NOT NULL,
+        timestamp TEXT NOT NULL
+      )
+    `);
+
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS pro_requests (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        family_code TEXT NOT NULL,
+        user_name TEXT NOT NULL,
+        email TEXT NOT NULL,
+        family_size INTEGER NOT NULL,
+        why_pro TEXT NOT NULL,
+        problems_to_solve TEXT NOT NULL,
+        valuable_features TEXT NOT NULL,
+        status TEXT DEFAULT 'pending',
+        admin_notes TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS pro_feedback (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        family_code TEXT NOT NULL,
+        month_year TEXT NOT NULL,
+        times_used TEXT NOT NULL,
+        members_used INTEGER NOT NULL,
+        usage_situations TEXT NOT NULL,
+        worked_well TEXT NOT NULL,
+        problems_encountered TEXT NOT NULL,
+        features_to_improve TEXT NOT NULL,
+        recommendation_score INTEGER NOT NULL,
+        status TEXT DEFAULT 'submitted',
+        created_at TEXT NOT NULL
+      )
+    `);
+
     // Ensure notification_state has current_location_name column
     try {
       await db.execute(`ALTER TABLE notification_state ADD COLUMN current_location_name TEXT`);
-    } catch (_) {
-      // Column already exists
-    }
+    } catch (_) {}
+
+    // Ensure family_circles has subscription_tier, created_at, and custom_curfews columns
+    try {
+      await db.execute(`ALTER TABLE family_circles ADD COLUMN subscription_tier TEXT DEFAULT 'basic'`);
+    } catch (_) {}
+
+    try {
+      await db.execute(`ALTER TABLE family_circles ADD COLUMN created_at TEXT`);
+    } catch (_) {}
+
+    try {
+      await db.execute(`ALTER TABLE family_circles ADD COLUMN subscription_expires_at TEXT`);
+    } catch (_) {}
+
+    try {
+      await db.execute(`ALTER TABLE family_circles ADD COLUMN custom_curfews TEXT`);
+    } catch (_) {}
+
+    try {
+      await db.execute(`ALTER TABLE family_circles ADD COLUMN pro_granted_at TEXT`);
+    } catch (_) {}
+
+    try {
+      await db.execute(`ALTER TABLE family_circles ADD COLUMN pro_revoked_at TEXT`);
+    } catch (_) {}
+
+    try {
+      await db.execute(`ALTER TABLE family_circles ADD COLUMN pro_notes TEXT`);
+    } catch (_) {}
+
+    try {
+      await db.execute(`ALTER TABLE users ADD COLUMN is_deactivated INTEGER DEFAULT 0`);
+    } catch (_) {}
+
+    try {
+      await db.execute(`ALTER TABLE users ADD COLUMN pro_status TEXT DEFAULT 'none'`);
+    } catch (_) {}
+
+    try {
+      await db.execute(`ALTER TABLE users ADD COLUMN pro_approved_at TEXT`);
+    } catch (_) {}
+
+    try {
+      await db.execute(`ALTER TABLE users ADD COLUMN pro_approval_reason TEXT`);
+    } catch (_) {}
+
+    try {
+      await db.execute(`ALTER TABLE users ADD COLUMN last_feedback_at TEXT`);
+    } catch (_) {}
+
+    try {
+      await db.execute(`ALTER TABLE users ADD COLUMN feedback_postponed_until TEXT`);
+    } catch (_) {}
+
+    try {
+      await db.execute(`ALTER TABLE users ADD COLUMN missed_feedback_count INTEGER DEFAULT 0`);
+    } catch (_) {}
+
+    try {
+      await db.execute(`ALTER TABLE users ADD COLUMN deactivated_at TEXT`);
+    } catch (_) {}
 
     schemaInitialized = true;
   } catch (e) {
@@ -129,14 +235,20 @@ export async function validateSession(cookieHeader) {
   try {
     const now = new Date().toISOString();
     const res = await db.execute({
-      sql: `SELECT users.id, users.name, users.email, users.role, users.family_code
+      sql: `SELECT users.id, users.name, users.email, users.role, users.family_code, users.is_deactivated, users.pro_status, users.deactivated_at
             FROM session_tokens
             JOIN users ON session_tokens.user_id = users.id
             WHERE session_tokens.token = ? AND session_tokens.expires_at > ?`,
       args: [token, now],
     });
 
-    return res.rows.length > 0 ? res.rows[0] : null;
+    if (res.rows.length === 0) return null;
+
+    const u = res.rows[0];
+    if (u.role === 'admin') {
+      u.family_code = 'ADMIN_GLOBAL';
+    }
+    return u;
   } catch (e) {
     console.error('Session validation error:', e);
     return null;

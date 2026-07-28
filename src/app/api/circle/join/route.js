@@ -25,6 +25,27 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Family code not found' }, { status: 404 });
     }
 
+    // Check subscription tier & member limit
+    const circleRes = await db.execute({
+      sql: 'SELECT subscription_tier FROM family_circles WHERE family_code = ?',
+      args: [family_code.trim()],
+    });
+    const circleTier = (circleRes.rows[0]?.subscription_tier || 'basic').toLowerCase();
+    const isPlus = circleTier !== 'basic' && circleTier !== 'free';
+    const maxMembers = isPlus ? 10 : 4;
+
+    const currentMembersRes = await db.execute({
+      sql: 'SELECT COUNT(*) as count FROM users WHERE family_code = ?',
+      args: [family_code.trim()],
+    });
+    const currentCount = Number(currentMembersRes.rows[0]?.count || 0);
+
+    if (currentCount >= maxMembers) {
+      return NextResponse.json({
+        error: `Circle member limit reached (${maxMembers} members max on ${circleTier === 'plus' ? 'Plus' : 'Basic'} plan). ${circleTier === 'basic' ? 'Upgrade to HomeTracker Plus to add up to 10 members.' : ''}`
+      }, { status: 400 });
+    }
+
     // Join the circle, forcing role to 'child' just to be safe for joiners.
     await db.execute({
       sql: "UPDATE users SET family_code = ?, role = 'child' WHERE id = ?",

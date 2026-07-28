@@ -41,12 +41,23 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Location name and address are required.' }, { status: 400 });
     }
 
-    // 1. Check current locations count (Home + Extra Locations)
-    const homeRes = await db.execute({
-      sql: 'SELECT home_address FROM family_circles WHERE family_code = ?',
+    // 1. Check current locations count & subscription tier
+    const circleRes = await db.execute({
+      sql: 'SELECT home_address, subscription_tier FROM family_circles WHERE family_code = ?',
       args: [user.family_code],
     });
-    const hasHome = homeRes.rows.length > 0 && homeRes.rows[0].home_address && homeRes.rows[0].home_address.trim() !== '';
+    const circleData = circleRes.rows[0];
+    const hasHome = circleData && circleData.home_address && circleData.home_address.trim() !== '';
+    const tier = (circleData?.subscription_tier || 'basic').toLowerCase();
+
+    // Check user pro_status as well
+    const userRes = await db.execute({
+      sql: 'SELECT pro_status FROM users WHERE family_code = ?',
+      args: [user.family_code],
+    });
+    const isUserPro = userRes.rows.some((u) => u.pro_status === 'approved');
+    const isPlus = (tier !== 'basic' && tier !== 'free') || isUserPro;
+    const maxLocations = isPlus ? 50 : 2;
 
     const locationsRes = await db.execute({
       sql: 'SELECT COUNT(*) as count FROM family_locations WHERE family_code = ?',
@@ -55,8 +66,10 @@ export async function POST(request) {
     const extraCount = Number(locationsRes.rows[0]?.count || 0);
     const totalCount = (hasHome ? 1 : 0) + extraCount;
 
-    if (totalCount >= 2) {
-      return NextResponse.json({ error: 'Maximum of 2 locations (including Home) allowed.' }, { status: 400 });
+    if (totalCount >= maxLocations) {
+      return NextResponse.json({
+        error: `Maximum of ${maxLocations} locations allowed on ${isPlus ? 'Pro' : 'Basic'} plan. ${!isPlus ? 'Request Pro access for 50 saved places.' : ''}`
+      }, { status: 400 });
     }
 
     // 2. Geocode address via OpenStreetMap Nominatim
