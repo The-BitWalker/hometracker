@@ -22,6 +22,20 @@ function calculateDistanceKm(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+// Utility: Format Family Code with auto capslock & auto dash after HT
+function formatFamilyCode(input) {
+  if (!input) return '';
+  let clean = input.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!clean) return '';
+  if (/^\d+$/.test(clean)) {
+    clean = 'HT' + clean;
+  }
+  if (clean.length > 2) {
+    return clean.slice(0, 2) + '-' + clean.slice(2, 6);
+  }
+  return clean;
+}
+
 // ============================================================
 // Custom Modal Component
 // ============================================================
@@ -247,6 +261,10 @@ export default function DashboardPage() {
     if (!user) return;
 
     try {
+      // First, trigger server-side notification evaluation for all child members.
+      // Await it so any newly-created notifications are picked up by the fetch below.
+      await fetch('/api/notifications/check').catch(() => {});
+
       const [homeRes, membersRes, notifRes] = await Promise.all([
         fetch('/api/circle/home').then((r) => r.json()),
         fetch('/api/circle/members').then((r) => r.json()),
@@ -883,7 +901,7 @@ export default function DashboardPage() {
   };
 
   const renderToast = () => (
-    <div ref={toastRef} style={{ display: 'none', opacity: 0, visibility: 'hidden' }} className="fixed top-6 left-1/2 -translate-x-1/2 w-[90%] max-w-sm bg-white border border-rose-100 px-4 py-3 rounded-2xl shadow-[0_10px_40px_-10px_rgba(244,63,94,0.3)] z-[100] items-center justify-between">
+    <div ref={toastRef} style={{ display: 'none', opacity: 0, visibility: 'hidden' }} className="fixed top-6 left-1/2 -translate-x-1/2 w-[90%] max-w-sm bg-white border border-rose-100 px-4 py-3 rounded-2xl shadow-[0_10px_40px_-10px_rgba(244,63,94,0.3)] z-[9999] items-center justify-between">
       <div className="flex items-center gap-3">
         <div className="w-10 h-10 rounded-full bg-rose-50 flex items-center justify-center shrink-0">
           <i className="fa-solid fa-bell text-rose-500 text-lg"></i>
@@ -935,7 +953,14 @@ export default function DashboardPage() {
             {!isParent && (
               <>
                 <div className="relative">
-                  <input type="text" value={joinCode} onChange={e => setJoinCode(e.target.value)} placeholder="Enter Family Code (e.g. HT-1234)" className="w-full py-3 px-4 text-sm font-bold text-center rounded-xl border border-slate-300 focus:border-[#5621bf] outline-none" />
+                  <input
+                    type="text"
+                    value={joinCode}
+                    onChange={(e) => setJoinCode(formatFamilyCode(e.target.value))}
+                    placeholder="Enter Family Code (e.g. HT-1234)"
+                    maxLength={7}
+                    className="w-full py-3 px-4 text-sm font-extrabold text-center rounded-xl border border-slate-300 focus:border-[#5621bf] outline-none uppercase tracking-widest bg-white"
+                  />
                 </div>
                 <button onClick={handleJoinCircle} onMouseEnter={hoverScaleIn} onMouseLeave={hoverScaleOut} className="w-full py-3 bg-[#5621bf] hover:bg-[#431799] text-white font-extrabold text-sm rounded-xl shadow-lg transition active:scale-95 flex items-center justify-center gap-2">
                   <i className="fa-solid fa-right-to-bracket"></i> Join Family

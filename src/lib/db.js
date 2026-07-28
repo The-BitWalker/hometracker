@@ -78,6 +78,19 @@ export async function ensureSchema() {
       )
     `);
 
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS notification_state (
+        user_id TEXT PRIMARY KEY,
+        family_code TEXT NOT NULL,
+        was_at_home INTEGER DEFAULT 1,
+        stationary_lat REAL,
+        stationary_lng REAL,
+        stationary_since TEXT,
+        stationary_notified INTEGER DEFAULT 0,
+        curfew_notified_date TEXT
+      )
+    `);
+
     schemaInitialized = true;
   } catch (e) {
     console.error('Schema init error:', e);

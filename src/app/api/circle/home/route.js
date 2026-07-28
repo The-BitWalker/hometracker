@@ -40,13 +40,13 @@ export async function POST(request) {
   try {
     const body = await request.json();
     const now = new Date().toISOString();
+    let updated = false;
 
+    // Check if we need to update address
     if (body.home_address !== undefined) {
-      // Save home address + coordinates
       let lat = body.home_lat || 51.5074;
       let lng = body.home_lng || -0.1278;
 
-      // Server-side geocoding via Nominatim
       if (body.home_address) {
         try {
           const geoRes = await fetch(
@@ -70,10 +70,10 @@ export async function POST(request) {
               home_address=excluded.home_address, home_lat=excluded.home_lat, home_lng=excluded.home_lng, updated_at=excluded.updated_at`,
         args: [user.family_code, body.home_address, lat, lng, now],
       });
-
-      return NextResponse.json({ success: true, home_lat: lat, home_lng: lng });
+      updated = true;
     }
 
+    // Check if we need to update curfew
     if (body.target_home_time !== undefined) {
       await db.execute({
         sql: `INSERT INTO family_circles (family_code, target_home_time, updated_at)
@@ -82,7 +82,10 @@ export async function POST(request) {
               target_home_time=excluded.target_home_time, updated_at=excluded.updated_at`,
         args: [user.family_code, body.target_home_time, now],
       });
+      updated = true;
+    }
 
+    if (updated) {
       return NextResponse.json({ success: true });
     }
 

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getDb, ensureSchema, validateSession } from '@/lib/db';
+import { evaluateNotifications } from '@/app/api/notifications/check/route';
 
 export async function POST(request) {
   await ensureSchema();
@@ -19,6 +20,7 @@ export async function POST(request) {
 
     const now = new Date().toISOString();
 
+    // Upsert member_status (existing behaviour)
     await db.execute({
       sql: `INSERT INTO member_status (user_id, family_code, current_lat, current_lng, updated_at)
             VALUES (?, ?, ?, ?, ?)
@@ -26,6 +28,29 @@ export async function POST(request) {
             current_lat=excluded.current_lat, current_lng=excluded.current_lng, updated_at=excluded.updated_at`,
       args: [user.id, user.family_code, lat, lng, now],
     });
+
+    // Run notification checks
+    try {
+      const homeRes = await db.execute({
+        sql: `SELECT home_lat, home_lng, target_home_time FROM family_circles WHERE family_code = ?`,
+        args: [user.family_code],
+      });
+      const home = homeRes.rows.length > 0 ? homeRes.rows[0] : null;
+
+      if (home && home.home_lat != null) {
+        const member = {
+          id: user.id,
+          name: user.name,
+          family_code: user.family_code,
+          current_lat: lat,
+          current_lng: lng,
+        };
+        await evaluateNotifications(db, member, home);
+      }
+    } catch (notifErr) {
+      // Don't fail the location update if notification checks error
+      console.error('Notification check error (non-fatal):', notifErr);
+    }
 
     return NextResponse.json({ success: true });
   } catch (e) {

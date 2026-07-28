@@ -19,6 +19,20 @@ function WaveBackground() {
   );
 }
 
+// Helper function to format Family Code with auto-capslock and automatic dash after HT
+function formatFamilyCode(input) {
+  if (!input) return '';
+  let clean = input.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!clean) return '';
+  if (/^\d+$/.test(clean)) {
+    clean = 'HT' + clean;
+  }
+  if (clean.length > 2) {
+    return clean.slice(0, 2) + '-' + clean.slice(2, 6);
+  }
+  return clean;
+}
+
 export default function AuthPage() {
   const [tab, setTab] = useState('signin');
   const [role, setRole] = useState('parent');
@@ -311,18 +325,7 @@ export default function AuthPage() {
                 <div className="relative">
                   <i className="fa-solid fa-key absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs sm:text-sm" />
                   <input type="text" value={familyCode}
-                    onChange={(e) => {
-                      let val = e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '');
-                      // Remove any dashes the user typed so we control placement
-                      const raw = val.replace(/-/g, '');
-                      // Auto-insert dash after first 2 characters
-                      if (raw.length > 2) {
-                        val = raw.slice(0, 2) + '-' + raw.slice(2, 6);
-                      } else {
-                        val = raw;
-                      }
-                      setFamilyCode(val);
-                    }}
+                    onChange={(e) => setFamilyCode(formatFamilyCode(e.target.value))}
                     onBlur={validateFamilyCode}
                     placeholder="e.g. HT-8921" maxLength={7}
                     className={`w-full pl-10 sm:pl-11 pr-4 py-2 rounded-xl border ${errors.familyCode ? 'border-rose-500' : 'border-[#e8e8e8] focus:border-[#5621bf]'} focus:ring-2 focus:ring-[#5621bf]/20 outline-none uppercase tracking-widest text-xs sm:text-sm font-extrabold text-slate-800 bg-white`} />

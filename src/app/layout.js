@@ -20,7 +20,7 @@ export default function RootLayout({ children }) {
       <head>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
       </head>
-      <body className="bg-[#fdfdfd] text-slate-800 antialiased font-[family-name:var(--font-plus-jakarta)] selection:bg-[#5621bf] selection:text-white min-h-full">
+      <body suppressHydrationWarning className="bg-[#fdfdfd] text-slate-800 antialiased font-[family-name:var(--font-plus-jakarta)] selection:bg-[#5621bf] selection:text-white min-h-full">
         {children}
         <InfoModal />
       </body>
