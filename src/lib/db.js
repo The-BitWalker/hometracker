@@ -7,9 +7,23 @@ let db = null;
 
 export function getDb() {
   if (!db) {
+    let url = process.env.TURSO_DATABASE_URL;
+    const authToken = process.env.TURSO_AUTH_TOKEN;
+
+    if (!url) {
+      logLifecycle('DB_CLIENT_ERROR_MISSING_URL');
+      throw new Error('TURSO_DATABASE_URL environment variable is missing.');
+    }
+
+    // Serverless (Vercel) compatibility: Convert libsql:// to https://
+    // AWS Lambda serverless functions require stateless HTTP requests via fetch() instead of persistent WebSockets
+    if (url.startsWith('libsql://')) {
+      url = url.replace('libsql://', 'https://');
+    }
+
     db = createClient({
-      url: process.env.TURSO_DATABASE_URL,
-      authToken: process.env.TURSO_AUTH_TOKEN,
+      url,
+      authToken,
     });
   }
   return db;

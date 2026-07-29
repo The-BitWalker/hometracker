@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getDb, ensureSchema, validateSession, verifyPassword, clearSessionCookieHeader } from '@/lib/db';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export async function POST(request) {
   await ensureSchema();
   const db = getDb();

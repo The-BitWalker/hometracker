@@ -1,0 +1,40 @@
+'use client';
+
+import { useEffect } from 'react';
+import Link from 'next/link';
+
+export default function RootError({ error, reset }) {
+  useEffect(() => {
+    console.error('[NEXT_ROOT_ERROR_BOUNDARY]', error);
+  }, [error]);
+
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-slate-50 text-center font-sans">
+      <div className="w-full max-w-md bg-white/90 backdrop-blur-xl border border-slate-200 rounded-3xl p-8 shadow-2xl space-y-6">
+        <div className="w-16 h-16 bg-rose-100 text-rose-600 rounded-2xl flex items-center justify-center mx-auto text-2xl shadow-xs">
+          <i className="fa-solid fa-triangle-exclamation" />
+        </div>
+        <div>
+          <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">Something went wrong</h2>
+          <p className="text-xs font-semibold text-slate-500 mt-2 leading-relaxed">
+            {error?.message || 'An unexpected error occurred while loading this page.'}
+          </p>
+        </div>
+        <div className="flex gap-3 pt-2">
+          <button
+            onClick={() => reset()}
+            className="flex-1 py-3 bg-[#5621bf] hover:bg-[#431799] text-white font-extrabold text-xs rounded-xl shadow-md transition active:scale-95 cursor-pointer"
+          >
+            Try Again
+          </button>
+          <Link
+            href="/"
+            className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs rounded-xl transition active:scale-95 flex items-center justify-center"
+          >
+            Return Home
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
