@@ -405,6 +405,15 @@ export default function DashboardPage() {
   
   const [joinCode, setJoinCode] = useState('');
 
+  // Derived State (Hoist to top to prevent TDZ errors in hooks)
+  const isParent = user?.role === 'parent';
+  const isAdmin = user?.role === 'admin';
+  const isChild = user?.role === 'child';
+  const homeIsSet = home?.home_address;
+  const totalSavedLocations = (homeIsSet ? 1 : 0) + extraLocations.length;
+  const isPlusCircle = subscription?.is_plus || user?.pro_status === 'approved' || (subscription?.subscription_tier && subscription?.subscription_tier.toLowerCase() !== 'basic' && subscription?.subscription_tier.toLowerCase() !== 'free');
+  const maxLocationsAllowed = isPlusCircle ? 50 : 2;
+
   // Map & Profile refs
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -1983,14 +1992,6 @@ export default function DashboardPage() {
       </div>
     );
   }
-
-  const isParent = user?.role === 'parent';
-  const isAdmin = user?.role === 'admin';
-  const isChild = user?.role === 'child';
-  const homeIsSet = home?.home_address;
-  const totalSavedLocations = (homeIsSet ? 1 : 0) + extraLocations.length;
-  const isPlusCircle = subscription?.is_plus || user?.pro_status === 'approved' || (subscription?.subscription_tier && subscription?.subscription_tier.toLowerCase() !== 'basic' && subscription?.subscription_tier.toLowerCase() !== 'free');
-  const maxLocationsAllowed = isPlusCircle ? 50 : 2;
 
   // ---- Helper: get member status info ----
   const getMemberStatus = (member) => {
