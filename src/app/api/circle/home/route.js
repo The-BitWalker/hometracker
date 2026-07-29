@@ -1,20 +1,31 @@
 import { NextResponse } from 'next/server';
-import { getDb, ensureSchema, validateSession } from '@/lib/db';
+import { getDb, ensureSchema, validateSession, logLifecycle } from '@/lib/db';
+
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 // GET: Fetch home address + curfew for the user's family
 export async function GET(request) {
-  await ensureSchema();
-
-  const user = await validateSession(request.headers.get('cookie'));
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  const db = getDb();
+  const startTime = Date.now();
+  logLifecycle('API_CIRCLE_HOME_START');
 
   try {
+    await ensureSchema();
+
+    const user = await validateSession(request.headers.get('cookie'));
+    if (!user) {
+      logLifecycle('API_CIRCLE_HOME_UNAUTHENTICATED', { durationMs: Date.now() - startTime });
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const db = getDb();
+
     const res = await db.execute({
       sql: 'SELECT home_address, home_lat, home_lng, target_home_time FROM family_circles WHERE family_code = ?',
       args: [user.family_code],
     });
+
+    logLifecycle('API_CIRCLE_HOME_SUCCESS', { durationMs: Date.now() - startTime });
 
     if (res.rows.length > 0) {
       return NextResponse.json({ home: res.rows[0] });
@@ -22,7 +33,7 @@ export async function GET(request) {
 
     return NextResponse.json({ home: null });
   } catch (e) {
-    console.error('Circle home GET error:', e);
+    logLifecycle('API_CIRCLE_HOME_ERROR', { error: e.message, stack: e.stack, durationMs: Date.now() - startTime });
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }

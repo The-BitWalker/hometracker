@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
-import { getDb, ensureSchema, validateSession } from '@/lib/db';
+import { getDb, ensureSchema, validateSession, logLifecycle } from '@/lib/db';
+
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 function getCurrentMonthYear() {
   const d = new Date();
@@ -9,14 +12,20 @@ function getCurrentMonthYear() {
 
 // GET: Fetch Pro Beta status, limits, and feedback status info
 export async function GET(request) {
-  await ensureSchema();
-
-  const user = await validateSession(request.headers.get('cookie'));
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  const db = getDb();
+  const startTime = Date.now();
+  logLifecycle('API_SUBSCRIPTION_START');
 
   try {
+    await ensureSchema();
+
+    const user = await validateSession(request.headers.get('cookie'));
+    if (!user) {
+      logLifecycle('API_SUBSCRIPTION_UNAUTHENTICATED', { durationMs: Date.now() - startTime });
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const db = getDb();
+
     // Fetch circle record & all circle members to check Pro status
     const circleRes = await db.execute({
       sql: `SELECT family_code, subscription_tier, subscription_expires_at, custom_curfews FROM family_circles WHERE family_code = ?`,
@@ -138,6 +147,17 @@ export async function GET(request) {
     });
     const proRequest = reqRes.rows.length > 0 ? reqRes.rows[0] : null;
 
+    let safeCustomCurfews = {};
+    if (circle?.custom_curfews) {
+      try {
+        safeCustomCurfews = JSON.parse(circle.custom_curfews);
+      } catch (parseErr) {
+        logLifecycle('API_SUBSCRIPTION_CURFEWS_PARSE_WARN', { error: parseErr.message });
+      }
+    }
+
+    logLifecycle('API_SUBSCRIPTION_SUCCESS', { isPlus: effectiveIsPlus, durationMs: Date.now() - startTime });
+
     return NextResponse.json({
       family_code: user.family_code,
       subscription_tier: effectiveIsPlus ? 'plus' : 'basic',
@@ -150,7 +170,7 @@ export async function GET(request) {
       last_feedback_at: userDbData.last_feedback_at || null,
       user_is_deactivated: Boolean(userDbData.is_deactivated),
       user_deactivated_at: userDbData.deactivated_at || null,
-      custom_curfews: circle?.custom_curfews ? JSON.parse(circle.custom_curfews) : {},
+      custom_curfews: safeCustomCurfews,
       deactivated_members_count: deactivatedMemberCount,
       limits: {
         max_members: effectiveIsPlus ? 10 : 4,
@@ -164,23 +184,28 @@ export async function GET(request) {
       },
     });
   } catch (e) {
-    console.error('Subscription GET error:', e);
+    logLifecycle('API_SUBSCRIPTION_ERROR', { error: e.message, stack: e.stack, durationMs: Date.now() - startTime });
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }
 
 // POST: Admin toggle / legacy fallback endpoint
 export async function POST(request) {
-  await ensureSchema();
+  try {
+    await ensureSchema();
 
-  const user = await validateSession(request.headers.get('cookie'));
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (user.role !== 'parent' && user.role !== 'admin') {
-    return NextResponse.json({ error: 'Parent or Admin account required.' }, { status: 403 });
+    const user = await validateSession(request.headers.get('cookie'));
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (user.role !== 'parent' && user.role !== 'admin') {
+      return NextResponse.json({ error: 'Parent or Admin account required.' }, { status: 403 });
+    }
+
+    return NextResponse.json({
+      error: 'Direct purchase is disabled. Please submit a HomeTracker Pro Beta Application.',
+      redirect: '/dashboard?action=request_pro',
+    }, { status: 400 });
+  } catch (e) {
+    return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
-
-  return NextResponse.json({
-    error: 'Direct purchase is disabled. Please submit a HomeTracker Pro Beta Application.',
-    redirect: '/dashboard?action=request_pro',
-  }, { status: 400 });
 }
+

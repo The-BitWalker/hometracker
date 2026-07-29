@@ -1,15 +1,24 @@
 import { NextResponse } from 'next/server';
-import { getDb, ensureSchema, validateSession } from '@/lib/db';
+import { getDb, ensureSchema, validateSession, logLifecycle } from '@/lib/db';
+
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 export async function GET(request) {
-  await ensureSchema();
-
-  const user = await validateSession(request.headers.get('cookie'));
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  const db = getDb();
+  const startTime = Date.now();
+  logLifecycle('API_MEMBERS_START');
 
   try {
+    await ensureSchema();
+
+    const user = await validateSession(request.headers.get('cookie'));
+    if (!user) {
+      logLifecycle('API_MEMBERS_UNAUTHENTICATED', { durationMs: Date.now() - startTime });
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const db = getDb();
+
     const res = await db.execute({
       sql: `SELECT users.id, users.name, users.email, users.role, users.is_deactivated,
                    member_status.current_lat, member_status.current_lng
@@ -40,13 +49,16 @@ export async function GET(request) {
       }
     }
 
+    logLifecycle('API_MEMBERS_SUCCESS', { activeCount: activeMembers.length, deactivatedCount: deactivatedMembers.length, durationMs: Date.now() - startTime });
+
     return NextResponse.json({
       members: activeMembers,
       deactivated_members: deactivatedMembers,
       deactivated_count: deactivatedMembers.length,
     });
   } catch (e) {
-    console.error('Members GET error:', e);
+    logLifecycle('API_MEMBERS_ERROR', { error: e.message, stack: e.stack, durationMs: Date.now() - startTime });
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }
+

@@ -1,26 +1,34 @@
 import { NextResponse } from 'next/server';
-import { getDb, ensureSchema, validateSession } from '@/lib/db';
+import { getDb, ensureSchema, validateSession, logLifecycle } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export async function GET(request) {
-  await ensureSchema();
-  const user = await validateSession(request.headers.get('cookie'));
-  
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  const db = getDb();
+  const startTime = Date.now();
+  logLifecycle('API_NOTIFICATIONS_START');
 
   try {
+    await ensureSchema();
+    const user = await validateSession(request.headers.get('cookie'));
+    
+    if (!user) {
+      logLifecycle('API_NOTIFICATIONS_UNAUTHENTICATED', { durationMs: Date.now() - startTime });
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const db = getDb();
+
     const notifications = await db.execute({
       sql: 'SELECT id, message, is_read, created_at FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 20',
       args: [user.id]
     });
 
+    logLifecycle('API_NOTIFICATIONS_SUCCESS', { count: notifications.rows.length, durationMs: Date.now() - startTime });
+
     return NextResponse.json({ notifications: notifications.rows });
   } catch (e) {
-    console.error('Fetch notifications error:', e);
+    logLifecycle('API_NOTIFICATIONS_ERROR', { error: e.message, stack: e.stack, durationMs: Date.now() - startTime });
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }

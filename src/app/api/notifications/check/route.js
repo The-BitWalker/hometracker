@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getDb, ensureSchema, validateSession } from '@/lib/db';
+import { getDb, ensureSchema, validateSession, logLifecycle } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -243,14 +243,20 @@ export { evaluateNotifications, distanceKm, HOME_THRESHOLD_KM };
 // notification checks for ALL child members in the family.
 // ============================================================
 export async function GET(request) {
-  await ensureSchema();
-
-  const user = await validateSession(request.headers.get('cookie'));
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  const db = getDb();
+  const startTime = Date.now();
+  logLifecycle('API_NOTIF_CHECK_START');
 
   try {
+    await ensureSchema();
+
+    const user = await validateSession(request.headers.get('cookie'));
+    if (!user) {
+      logLifecycle('API_NOTIF_CHECK_UNAUTHENTICATED', { durationMs: Date.now() - startTime });
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const db = getDb();
+
     // Fetch home info
     const homeRes = await db.execute({
       sql: `SELECT home_lat, home_lng, target_home_time FROM family_circles WHERE family_code = ?`,
@@ -259,6 +265,7 @@ export async function GET(request) {
     const home = homeRes.rows.length > 0 ? homeRes.rows[0] : null;
 
     if (!home || home.home_lat == null) {
+      logLifecycle('API_NOTIF_CHECK_NO_HOME', { durationMs: Date.now() - startTime });
       return NextResponse.json({ checked: false, reason: 'no_home' });
     }
 
@@ -285,9 +292,11 @@ export async function GET(request) {
       }
     }
 
+    logLifecycle('API_NOTIF_CHECK_SUCCESS', { membersChecked: membersRes.rows.length, durationMs: Date.now() - startTime });
+
     return NextResponse.json({ checked: true, members_checked: membersRes.rows.length });
   } catch (e) {
-    console.error('Notification check error:', e);
+    logLifecycle('API_NOTIF_CHECK_ERROR', { error: e.message, stack: e.stack, durationMs: Date.now() - startTime });
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }

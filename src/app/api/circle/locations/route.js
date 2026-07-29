@@ -1,24 +1,35 @@
 import { NextResponse } from 'next/server';
-import { getDb, ensureSchema, validateSession } from '@/lib/db';
+import { getDb, ensureSchema, validateSession, logLifecycle } from '@/lib/db';
+
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 // GET: Fetch all extra locations for the user's family circle
 export async function GET(request) {
-  await ensureSchema();
-
-  const user = await validateSession(request.headers.get('cookie'));
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  const db = getDb();
+  const startTime = Date.now();
+  logLifecycle('API_LOCATIONS_START');
 
   try {
+    await ensureSchema();
+
+    const user = await validateSession(request.headers.get('cookie'));
+    if (!user) {
+      logLifecycle('API_LOCATIONS_UNAUTHENTICATED', { durationMs: Date.now() - startTime });
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const db = getDb();
+
     const res = await db.execute({
       sql: 'SELECT id, family_code, name, address, lat, lng, created_at FROM family_locations WHERE family_code = ? ORDER BY created_at ASC',
       args: [user.family_code],
     });
 
+    logLifecycle('API_LOCATIONS_SUCCESS', { count: res.rows.length, durationMs: Date.now() - startTime });
+
     return NextResponse.json({ locations: res.rows });
   } catch (e) {
-    console.error('Locations GET error:', e);
+    logLifecycle('API_LOCATIONS_ERROR', { error: e.message, stack: e.stack, durationMs: Date.now() - startTime });
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }

@@ -1,17 +1,22 @@
 import { NextResponse } from 'next/server';
-import { getDb, ensureSchema, validateSession } from '@/lib/db';
+import { getDb, ensureSchema, validateSession, logLifecycle } from '@/lib/db';
 import { evaluateNotifications } from '@/app/api/notifications/check/route';
 
 export async function POST(request) {
-  await ensureSchema();
-
-  const user = await validateSession(request.headers.get('cookie'));
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (user.role !== 'child') return NextResponse.json({ error: 'Only children broadcast location.' }, { status: 403 });
-
-  const db = getDb();
+  const startTime = Date.now();
+  logLifecycle('API_LOCATION_UPDATE_START');
 
   try {
+    await ensureSchema();
+
+    const user = await validateSession(request.headers.get('cookie'));
+    if (!user) {
+      logLifecycle('API_LOCATION_UPDATE_UNAUTHENTICATED', { durationMs: Date.now() - startTime });
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    if (user.role !== 'child') return NextResponse.json({ error: 'Only children broadcast location.' }, { status: 403 });
+
+    const db = getDb();
     const { lat, lng } = await request.json();
 
     if (lat == null || lng == null) {
@@ -36,7 +41,7 @@ export async function POST(request) {
         args: [crypto.randomUUID(), user.id, user.family_code, lat, lng, now],
       });
     } catch (hErr) {
-      console.warn('Failed to log location history (non-fatal):', hErr);
+      logLifecycle('API_LOCATION_UPDATE_HISTORY_WARN', { error: hErr.message });
     }
 
     // Run notification checks
@@ -58,13 +63,15 @@ export async function POST(request) {
         await evaluateNotifications(db, member, home);
       }
     } catch (notifErr) {
-      // Don't fail the location update if notification checks error
-      console.error('Notification check error (non-fatal):', notifErr);
+      logLifecycle('API_LOCATION_UPDATE_NOTIF_WARN', { error: notifErr.message });
     }
+
+    logLifecycle('API_LOCATION_UPDATE_SUCCESS', { userId: user.id, lat, lng, durationMs: Date.now() - startTime });
 
     return NextResponse.json({ success: true });
   } catch (e) {
-    console.error('Location update error:', e);
+    logLifecycle('API_LOCATION_UPDATE_ERROR', { error: e.message, stack: e.stack, durationMs: Date.now() - startTime });
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }
+

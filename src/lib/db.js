@@ -15,224 +15,167 @@ export function getDb() {
   return db;
 }
 
-// Initialize database schema (called once on first API request)
-let schemaInitialized = false;
+// Structured logger helper for tracking request lifecycles
+export function logLifecycle(stage, details = {}) {
+  const timestamp = new Date().toISOString();
+  console.log(`[LIFECYCLE][${timestamp}][${stage}]`, JSON.stringify(details));
+}
 
-export async function ensureSchema() {
-  if (schemaInitialized) return;
+// Global promise lock to guarantee schema initialization runs at most ONCE per process
+let schemaInitPromise = null;
 
-  const db = getDb();
+export function ensureSchema() {
+  if (schemaInitPromise) return schemaInitPromise;
 
-  try {
-    await db.execute(`
-      CREATE TABLE IF NOT EXISTS users (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        email TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        role TEXT NOT NULL,
-        family_code TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      )
-    `);
+  schemaInitPromise = (async () => {
+    const startTime = Date.now();
+    logLifecycle('SCHEMA_INIT_START');
 
-    await db.execute(`
-      CREATE TABLE IF NOT EXISTS session_tokens (
-        token TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        expires_at TEXT NOT NULL,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-      )
-    `);
-
-    await db.execute(`
-      CREATE TABLE IF NOT EXISTS family_circles (
-        family_code TEXT PRIMARY KEY,
-        home_address TEXT,
-        home_lat REAL,
-        home_lng REAL,
-        target_home_time TEXT,
-        updated_at TEXT
-      )
-    `);
-
-    await db.execute(`
-      CREATE TABLE IF NOT EXISTS member_status (
-        user_id TEXT PRIMARY KEY,
-        family_code TEXT NOT NULL,
-        current_lat REAL,
-        current_lng REAL,
-        updated_at TEXT
-      )
-    `);
-
-    await db.execute(`
-      CREATE TABLE IF NOT EXISTS notifications (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        message TEXT NOT NULL,
-        is_read INTEGER DEFAULT 0,
-        created_at TEXT NOT NULL,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-      )
-    `);
-
-    await db.execute(`
-      CREATE TABLE IF NOT EXISTS notification_state (
-        user_id TEXT PRIMARY KEY,
-        family_code TEXT NOT NULL,
-        was_at_home INTEGER DEFAULT 1,
-        stationary_lat REAL,
-        stationary_lng REAL,
-        stationary_since TEXT,
-        stationary_notified INTEGER DEFAULT 0,
-        curfew_notified_date TEXT
-      )
-    `);
-
-    await db.execute(`
-      CREATE TABLE IF NOT EXISTS family_locations (
-        id TEXT PRIMARY KEY,
-        family_code TEXT NOT NULL,
-        name TEXT NOT NULL,
-        address TEXT NOT NULL,
-        lat REAL,
-        lng REAL,
-        created_at TEXT NOT NULL
-      )
-    `);
-
-    await db.execute(`
-      CREATE TABLE IF NOT EXISTS location_history (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        family_code TEXT NOT NULL,
-        lat REAL NOT NULL,
-        lng REAL NOT NULL,
-        timestamp TEXT NOT NULL
-      )
-    `);
-
-    await db.execute(`
-      CREATE TABLE IF NOT EXISTS pro_requests (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        family_code TEXT NOT NULL,
-        user_name TEXT NOT NULL,
-        email TEXT NOT NULL,
-        family_size INTEGER NOT NULL,
-        why_pro TEXT NOT NULL,
-        problems_to_solve TEXT NOT NULL,
-        valuable_features TEXT NOT NULL,
-        status TEXT DEFAULT 'pending',
-        admin_notes TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      )
-    `);
-
-    await db.execute(`
-      CREATE TABLE IF NOT EXISTS pro_feedback (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        family_code TEXT NOT NULL,
-        month_year TEXT NOT NULL,
-        times_used TEXT NOT NULL,
-        members_used INTEGER NOT NULL,
-        usage_situations TEXT NOT NULL,
-        worked_well TEXT NOT NULL,
-        problems_encountered TEXT NOT NULL,
-        features_to_improve TEXT NOT NULL,
-        recommendation_score INTEGER NOT NULL,
-        status TEXT DEFAULT 'submitted',
-        created_at TEXT NOT NULL
-      )
-    `);
-
-    await db.execute(`
-      CREATE TABLE IF NOT EXISTS app_settings (
-        setting_key TEXT PRIMARY KEY,
-        setting_value TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      )
-    `);
-
-    // Ensure default setting for survey interval exists
-    try {
-      await db.execute(`INSERT OR IGNORE INTO app_settings (setting_key, setting_value, updated_at) VALUES ('survey_interval_mode', 'test_mode', ?)`, [new Date().toISOString()]);
-    } catch (_) {}
-
-    // Ensure notification_state has current_location_name column
-    try {
-      await db.execute(`ALTER TABLE notification_state ADD COLUMN current_location_name TEXT`);
-    } catch (_) {}
-
-    // Ensure family_circles has subscription_tier, created_at, and custom_curfews columns
-    try {
-      await db.execute(`ALTER TABLE family_circles ADD COLUMN subscription_tier TEXT DEFAULT 'basic'`);
-    } catch (_) {}
+    const db = getDb();
 
     try {
-      await db.execute(`ALTER TABLE family_circles ADD COLUMN created_at TEXT`);
-    } catch (_) {}
+      // Step 1: Batch all table creations in a single remote HTTP request
+      await db.batch([
+        `CREATE TABLE IF NOT EXISTS users (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          email TEXT UNIQUE NOT NULL,
+          password_hash TEXT NOT NULL,
+          role TEXT NOT NULL,
+          family_code TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        )`,
+        `CREATE TABLE IF NOT EXISTS session_tokens (
+          token TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )`,
+        `CREATE TABLE IF NOT EXISTS family_circles (
+          family_code TEXT PRIMARY KEY,
+          home_address TEXT,
+          home_lat REAL,
+          home_lng REAL,
+          target_home_time TEXT,
+          updated_at TEXT
+        )`,
+        `CREATE TABLE IF NOT EXISTS member_status (
+          user_id TEXT PRIMARY KEY,
+          family_code TEXT NOT NULL,
+          current_lat REAL,
+          current_lng REAL,
+          updated_at TEXT
+        )`,
+        `CREATE TABLE IF NOT EXISTS notifications (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          message TEXT NOT NULL,
+          is_read INTEGER DEFAULT 0,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )`,
+        `CREATE TABLE IF NOT EXISTS notification_state (
+          user_id TEXT PRIMARY KEY,
+          family_code TEXT NOT NULL,
+          was_at_home INTEGER DEFAULT 1,
+          stationary_lat REAL,
+          stationary_lng REAL,
+          stationary_since TEXT,
+          stationary_notified INTEGER DEFAULT 0,
+          curfew_notified_date TEXT
+        )`,
+        `CREATE TABLE IF NOT EXISTS family_locations (
+          id TEXT PRIMARY KEY,
+          family_code TEXT NOT NULL,
+          name TEXT NOT NULL,
+          address TEXT NOT NULL,
+          lat REAL,
+          lng REAL,
+          created_at TEXT NOT NULL
+        )`,
+        `CREATE TABLE IF NOT EXISTS location_history (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          family_code TEXT NOT NULL,
+          lat REAL NOT NULL,
+          lng REAL NOT NULL,
+          timestamp TEXT NOT NULL
+        )`,
+        `CREATE TABLE IF NOT EXISTS pro_requests (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          family_code TEXT NOT NULL,
+          user_name TEXT NOT NULL,
+          email TEXT NOT NULL,
+          family_size INTEGER NOT NULL,
+          why_pro TEXT NOT NULL,
+          problems_to_solve TEXT NOT NULL,
+          valuable_features TEXT NOT NULL,
+          status TEXT DEFAULT 'pending',
+          admin_notes TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )`,
+        `CREATE TABLE IF NOT EXISTS pro_feedback (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          family_code TEXT NOT NULL,
+          month_year TEXT NOT NULL,
+          times_used TEXT NOT NULL,
+          members_used INTEGER NOT NULL,
+          usage_situations TEXT NOT NULL,
+          worked_well TEXT NOT NULL,
+          problems_encountered TEXT NOT NULL,
+          features_to_improve TEXT NOT NULL,
+          recommendation_score INTEGER NOT NULL,
+          status TEXT DEFAULT 'submitted',
+          created_at TEXT NOT NULL
+        )`,
+        `CREATE TABLE IF NOT EXISTS app_settings (
+          setting_key TEXT PRIMARY KEY,
+          setting_value TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )`
+      ], 'deferred');
 
-    try {
-      await db.execute(`ALTER TABLE family_circles ADD COLUMN subscription_expires_at TEXT`);
-    } catch (_) {}
+      // Step 2: Ensure column migrations exist (non-fatal if already exist)
+      const columnMigrations = [
+        `ALTER TABLE notification_state ADD COLUMN current_location_name TEXT`,
+        `ALTER TABLE family_circles ADD COLUMN subscription_tier TEXT DEFAULT 'basic'`,
+        `ALTER TABLE family_circles ADD COLUMN created_at TEXT`,
+        `ALTER TABLE family_circles ADD COLUMN subscription_expires_at TEXT`,
+        `ALTER TABLE family_circles ADD COLUMN custom_curfews TEXT`,
+        `ALTER TABLE family_circles ADD COLUMN pro_granted_at TEXT`,
+        `ALTER TABLE family_circles ADD COLUMN pro_revoked_at TEXT`,
+        `ALTER TABLE family_circles ADD COLUMN pro_notes TEXT`,
+        `ALTER TABLE users ADD COLUMN is_deactivated INTEGER DEFAULT 0`,
+        `ALTER TABLE users ADD COLUMN pro_status TEXT DEFAULT 'none'`,
+        `ALTER TABLE users ADD COLUMN pro_approved_at TEXT`,
+        `ALTER TABLE users ADD COLUMN pro_approval_reason TEXT`,
+        `ALTER TABLE users ADD COLUMN last_feedback_at TEXT`,
+        `ALTER TABLE users ADD COLUMN feedback_postponed_until TEXT`,
+        `ALTER TABLE users ADD COLUMN missed_feedback_count INTEGER DEFAULT 0`,
+        `ALTER TABLE users ADD COLUMN deactivated_at TEXT`
+      ];
 
-    try {
-      await db.execute(`ALTER TABLE family_circles ADD COLUMN custom_curfews TEXT`);
-    } catch (_) {}
+      for (const sql of columnMigrations) {
+        try {
+          await db.execute(sql);
+        } catch (_) {}
+      }
 
-    try {
-      await db.execute(`ALTER TABLE family_circles ADD COLUMN pro_granted_at TEXT`);
-    } catch (_) {}
+      try {
+        await db.execute(`INSERT OR IGNORE INTO app_settings (setting_key, setting_value, updated_at) VALUES ('survey_interval_mode', 'test_mode', ?)`, [new Date().toISOString()]);
+      } catch (_) {}
 
-    try {
-      await db.execute(`ALTER TABLE family_circles ADD COLUMN pro_revoked_at TEXT`);
-    } catch (_) {}
+      logLifecycle('SCHEMA_INIT_SUCCESS', { durationMs: Date.now() - startTime });
+    } catch (e) {
+      logLifecycle('SCHEMA_INIT_ERROR', { error: e.message, stack: e.stack });
+    }
+  })();
 
-    try {
-      await db.execute(`ALTER TABLE family_circles ADD COLUMN pro_notes TEXT`);
-    } catch (_) {}
-
-    try {
-      await db.execute(`ALTER TABLE users ADD COLUMN is_deactivated INTEGER DEFAULT 0`);
-    } catch (_) {}
-
-    try {
-      await db.execute(`ALTER TABLE users ADD COLUMN pro_status TEXT DEFAULT 'none'`);
-    } catch (_) {}
-
-    try {
-      await db.execute(`ALTER TABLE users ADD COLUMN pro_approved_at TEXT`);
-    } catch (_) {}
-
-    try {
-      await db.execute(`ALTER TABLE users ADD COLUMN pro_approval_reason TEXT`);
-    } catch (_) {}
-
-    try {
-      await db.execute(`ALTER TABLE users ADD COLUMN last_feedback_at TEXT`);
-    } catch (_) {}
-
-    try {
-      await db.execute(`ALTER TABLE users ADD COLUMN feedback_postponed_until TEXT`);
-    } catch (_) {}
-
-    try {
-      await db.execute(`ALTER TABLE users ADD COLUMN missed_feedback_count INTEGER DEFAULT 0`);
-    } catch (_) {}
-
-    try {
-      await db.execute(`ALTER TABLE users ADD COLUMN deactivated_at TEXT`);
-    } catch (_) {}
-
-    schemaInitialized = true;
-  } catch (e) {
-    console.error('Schema init error:', e);
-  }
+  return schemaInitPromise;
 }
 
 // Helper: validate session token from cookie, returns user or null

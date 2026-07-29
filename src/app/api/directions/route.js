@@ -1,76 +1,91 @@
 import { NextResponse } from 'next/server';
-import { validateSession } from '@/lib/db';
+import { validateSession, logLifecycle } from '@/lib/db';
+
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 // OSRM cycling directions proxy
 // Returns realistic bike-route distance, duration, and geometry between two coordinates
 export async function GET(request) {
-  const user = await validateSession(request.headers.get('cookie'));
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const { searchParams } = new URL(request.url);
-  const olat = searchParams.get('olat');
-  const olng = searchParams.get('olng');
-  const dlat = searchParams.get('dlat');
-  const dlng = searchParams.get('dlng');
-
-  if (!olat || !olng || !dlat || !dlng) {
-    return NextResponse.json({ error: 'Missing coordinates. Required: olat, olng, dlat, dlng' }, { status: 400 });
-  }
+  const startTime = Date.now();
+  logLifecycle('API_DIRECTIONS_START');
 
   try {
-    // OSRM expects lng,lat order (opposite of typical lat,lng)
-    const url = `https://router.project-osrm.org/route/v1/bike/${olng},${olat};${dlng},${dlat}?overview=full&geometries=geojson`;
-
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'HOMETRACKER/1.0' },
-      signal: AbortSignal.timeout(5000),
-    });
-
-    if (!res.ok) {
-      throw new Error(`OSRM returned status ${res.status}`);
+    const user = await validateSession(request.headers.get('cookie'));
+    if (!user) {
+      logLifecycle('API_DIRECTIONS_UNAUTHENTICATED', { durationMs: Date.now() - startTime });
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const data = await res.json();
+    const { searchParams } = new URL(request.url);
+    const olat = searchParams.get('olat');
+    const olng = searchParams.get('olng');
+    const dlat = searchParams.get('dlat');
+    const dlng = searchParams.get('dlng');
 
-    if (data.code !== 'Ok' || !data.routes || data.routes.length === 0) {
-      throw new Error('No route found');
+    if (!olat || !olng || !dlat || !dlng) {
+      return NextResponse.json({ error: 'Missing coordinates. Required: olat, olng, dlat, dlng' }, { status: 400 });
     }
 
-    const route = data.routes[0];
-    const distance_km = Math.round((route.distance / 1000) * 10) / 10; // meters -> km, 1 decimal
+    try {
+      // OSRM expects lng,lat order (opposite of typical lat,lng)
+      const url = `https://router.project-osrm.org/route/v1/bike/${olng},${olat};${dlng},${dlat}?overview=full&geometries=geojson`;
 
-    // Apply real-world buffer factor (1.35x + 2 min buffer for intersections, traffic lights, crosswalks, & realistic pace)
-    const rawMinutes = route.duration / 60;
-    const duration_min = Math.max(2, Math.ceil(rawMinutes * 1.35 + 2));
+      const res = await fetch(url, {
+        headers: { 'User-Agent': 'HOMETRACKER/1.0' },
+        signal: AbortSignal.timeout(5000),
+      });
 
-    // Extract geometry coordinates array [[lng, lat], ...]
-    const geometry = route.geometry ? route.geometry.coordinates : null;
+      if (!res.ok) {
+        throw new Error(`OSRM returned status ${res.status}`);
+      }
 
-    return NextResponse.json({ distance_km, duration_min, geometry });
-  } catch (e) {
-    console.warn('OSRM routing failed, using Haversine fallback:', e.message);
+      const data = await res.json();
 
-    // Haversine fallback
-    const R = 6371;
-    const dLat = ((dlat - olat) * Math.PI) / 180;
-    const dLon = ((dlng - olng) * Math.PI) / 180;
-    const a =
-      Math.sin(dLat / 2) ** 2 +
-      Math.cos((olat * Math.PI) / 180) * Math.cos((dlat * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
-    const straightLineKm = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      if (data.code !== 'Ok' || !data.routes || data.routes.length === 0) {
+        throw new Error('No route found');
+      }
 
-    // Apply 1.4x road factor for cycling, assume 12 km/h average real-world pace + 2 min buffer
-    const roadKm = straightLineKm * 1.4;
-    const mins = Math.ceil((roadKm / 12) * 60 + 2);
+      const route = data.routes[0];
+      const distance_km = Math.round((route.distance / 1000) * 10) / 10; // meters -> km, 1 decimal
 
-    return NextResponse.json({
-      distance_km: Math.round(roadKm * 10) / 10,
-      duration_min: Math.max(2, mins),
-      geometry: [[parseFloat(olng), parseFloat(olat)], [parseFloat(dlng), parseFloat(dlat)]],
-      fallback: true,
-    });
+      // Apply real-world buffer factor (1.35x + 2 min buffer for intersections, traffic lights, crosswalks, & realistic pace)
+      const rawMinutes = route.duration / 60;
+      const duration_min = Math.max(2, Math.ceil(rawMinutes * 1.35 + 2));
+
+      // Extract geometry coordinates array [[lng, lat], ...]
+      const geometry = route.geometry ? route.geometry.coordinates : null;
+
+      logLifecycle('API_DIRECTIONS_SUCCESS', { distance_km, duration_min, durationMs: Date.now() - startTime });
+
+      return NextResponse.json({ distance_km, duration_min, geometry });
+    } catch (e) {
+      logLifecycle('API_DIRECTIONS_OSRM_WARN', { error: e.message });
+
+      // Haversine fallback
+      const R = 6371;
+      const dLat = ((dlat - olat) * Math.PI) / 180;
+      const dLon = ((dlng - olng) * Math.PI) / 180;
+      const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos((olat * Math.PI) / 180) * Math.cos((dlat * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+      const straightLineKm = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+      // Apply 1.4x road factor for cycling, assume 12 km/h average real-world pace + 2 min buffer
+      const roadKm = straightLineKm * 1.4;
+      const mins = Math.ceil((roadKm / 12) * 60 + 2);
+
+      return NextResponse.json({
+        distance_km: Math.round(roadKm * 10) / 10,
+        duration_min: Math.max(2, mins),
+        geometry: [[parseFloat(olng), parseFloat(olat)], [parseFloat(dlng), parseFloat(dlat)]],
+        fallback: true,
+      });
+    }
+  } catch (err) {
+    logLifecycle('API_DIRECTIONS_ERROR', { error: err.message, stack: err.stack, durationMs: Date.now() - startTime });
+    return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }
+
 
