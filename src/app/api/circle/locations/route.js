@@ -79,7 +79,10 @@ export async function POST(request) {
     try {
       const geoRes = await fetch(
         `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address.trim())}`,
-        { headers: { 'User-Agent': 'HOMETRACKER/1.0' } }
+        { 
+          headers: { 'User-Agent': 'HOMETRACKER/1.0' },
+          signal: AbortSignal.timeout(5000)
+        }
       );
       const geoData = await geoRes.json();
       if (geoData && geoData.length > 0) {
@@ -142,7 +145,10 @@ export async function PUT(request) {
     try {
       const geoRes = await fetch(
         `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address.trim())}`,
-        { headers: { 'User-Agent': 'HOMETRACKER/1.0' } }
+        { 
+          headers: { 'User-Agent': 'HOMETRACKER/1.0' },
+          signal: AbortSignal.timeout(5000)
+        }
       );
       const geoData = await geoRes.json();
       if (geoData && geoData.length > 0) {
