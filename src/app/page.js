@@ -59,6 +59,7 @@ export default function HomePage() {
   const [copyIcon, setCopyIcon] = useState('fa-regular fa-copy');
   const [passwordInput, setPasswordInput] = useState('');
   const [isMaintenanceMode, setIsMaintenanceMode] = useState(false);
+  const [isHeaderHidden, setIsHeaderHidden] = useState(false);
 
   const accountMenuRef = useRef(null);
   const isParent = user?.role === 'parent';
@@ -97,6 +98,24 @@ export default function HomePage() {
       document.body.style.overflow = '';
     };
   }, [mobileMenuOpen]);
+
+  // Hide header when reaching the pricing section
+  useEffect(() => {
+    const handleScroll = () => {
+      const pricingSection = document.getElementById('pricing');
+      if (pricingSection) {
+        const rect = pricingSection.getBoundingClientRect();
+        // Hide if the top of the pricing section comes near the top of the viewport
+        if (rect.top <= 100) {
+          setIsHeaderHidden(true);
+        } else {
+          setIsHeaderHidden(false);
+        }
+      }
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -286,7 +305,8 @@ export default function HomePage() {
       {/* Hero Section Container */}
       <div className="min-h-screen min-h-dvh flex flex-col justify-between relative">
         {/* Header */}
-        <header className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between z-[1001] shrink-0 relative">
+        <div className={`fixed top-0 left-0 right-0 z-[1001] w-full bg-white shadow-sm border-b border-slate-200 transition-transform duration-300 ${isHeaderHidden ? '-translate-y-full' : 'translate-y-0'}`}>
+          <header className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between shrink-0">
           <Link href="/" className="flex items-center gap-2 sm:gap-2.5 group">
             <Image src="/logo.png" alt="HOMETRACKER Logo" width={44} height={44} className="w-8 h-8 sm:w-11 sm:h-11 object-contain group-hover:scale-105 transition-transform duration-300" />
             <span className="font-extrabold text-lg sm:text-2xl tracking-tight text-slate-900">
@@ -312,7 +332,7 @@ export default function HomePage() {
                   href="/dashboard"
                   className="px-4 py-2.5 rounded-xl bg-[#5621bf] hover:bg-[#431799] text-white font-extrabold text-sm shadow-md shadow-purple-500/20 hover:shadow-purple-500/30 transition-all flex items-center gap-2"
                 >
-                  <span>Open Dashboard</span>
+                  <span>{user?.role === 'admin' ? 'Open Dashboard' : 'Open Map'}</span>
                 </Link>
 
                 {/* Account Menu Trigger (Matches Dashboard profile trigger) */}
@@ -374,7 +394,7 @@ export default function HomePage() {
                         onClick={() => setAccountMenuOpen(false)}
                         className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-purple-50 hover:bg-purple-100 text-[#5621bf] font-extrabold text-xs transition-colors duration-150 group cursor-pointer mb-1"
                       >
-                        <span className="flex items-center gap-2">Go to Family Dashboard</span>
+                        <span className="flex items-center gap-2">{user?.role === 'admin' ? 'Go to Admin Dashboard' : 'Go to Family Map'}</span>
                         <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
                       </Link>
 
@@ -449,7 +469,8 @@ export default function HomePage() {
           >
             <AnimatedHamburger isOpen={mobileMenuOpen} />
           </button>
-        </header>
+          </header>
+        </div>
 
         {/* Mobile Navigation Menu */}
         {mobileMenuOpen && (
@@ -463,7 +484,7 @@ export default function HomePage() {
                     onClick={() => setMobileMenuOpen(false)}
                     className="w-full py-3.5 rounded-xl bg-[#5621bf] text-white font-extrabold text-base text-center shadow-lg flex items-center justify-center mb-2 transition-transform active:scale-95"
                   >
-                    <span>Open App Dashboard</span>
+                    <span>{user?.role === 'admin' ? 'Open Dashboard' : 'Open Map'}</span>
                   </Link>
                 ) : (
                   <Link
@@ -587,10 +608,7 @@ export default function HomePage() {
             {/* Left Column */}
             <div className="lg:col-span-7 flex flex-col items-center lg:items-start text-center lg:text-left z-10 w-full">
               <h1 className="text-3xl sm:text-5xl md:text-6xl lg:text-6xl xl:text-7xl font-black text-slate-900 tracking-tight leading-[1.1] mb-3 sm:mb-5 lg:mb-6">
-                Know where they are. <br />
-                <span className="bg-gradient-to-r from-[#5621bf] via-purple-600 to-indigo-600 bg-clip-text text-transparent">
-                  Know when they&apos;re home.
-                </span>
+                Know when <span className="text-[#5621bf]">they&apos;re home.</span>
               </h1>
 
               <p className="text-sm sm:text-lg lg:text-xl text-slate-600 font-medium max-w-2xl leading-relaxed mb-4 sm:mb-8">
@@ -606,7 +624,7 @@ export default function HomePage() {
                     href="/dashboard"
                     className="px-6 py-3.5 sm:px-8 sm:py-4 rounded-xl sm:rounded-2xl bg-[#5621bf] hover:bg-[#431799] text-white font-extrabold text-base sm:text-lg shadow-[0_20px_40px_-15px_rgba(86,33,191,0.25)] hover:shadow-purple-500/30 transition-all duration-300 transform hover:-translate-y-0.5 active:translate-y-0 flex items-center justify-center gap-2 sm:gap-3"
                   >
-                    <span>Open Dashboard</span>
+                    <span>{user?.role === 'admin' ? 'Open Dashboard' : 'Open Map'}</span>
                   </Link>
                 ) : (
                   <Link
