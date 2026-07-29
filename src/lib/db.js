@@ -1,4 +1,5 @@
 import { createClient } from '@libsql/client';
+import crypto from 'crypto';
 
 // Server-only Turso database client singleton
 // This file should ONLY be imported from API routes (server-side)
@@ -196,13 +197,20 @@ export function ensureSchema() {
 export async function validateSession(cookieHeader) {
   if (!cookieHeader) return null;
 
-  const match = cookieHeader.match(/(?:^|;\s*)ht_session=([^;]+)/);
-  if (!match) return null;
+  let token = null;
+  if (typeof cookieHeader === 'string') {
+    const match = cookieHeader.match(/(?:^|;\s*)ht_session=([^;]+)/);
+    if (match) {
+      token = match[1];
+    } else if (!cookieHeader.includes('=')) {
+      token = cookieHeader.trim();
+    }
+  }
 
-  const token = match[1];
-  const db = getDb();
+  if (!token) return null;
 
   try {
+    const db = getDb();
     const now = new Date().toISOString();
     const res = await db.execute({
       sql: `SELECT users.id, users.name, users.email, users.role, users.family_code, users.is_deactivated, users.pro_status, users.deactivated_at
@@ -220,7 +228,7 @@ export async function validateSession(cookieHeader) {
     }
     return u;
   } catch (e) {
-    console.error('Session validation error:', e);
+    logLifecycle('SESSION_VALIDATION_ERROR', { error: e.message });
     return null;
   }
 }
