@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getDb, ensureSchema, validateSession, hashPassword, clearSessionCookieHeader } from '@/lib/db';
+import { getDb, ensureSchema, validateSession, verifyPassword, clearSessionCookieHeader } from '@/lib/db';
 
 export async function POST(request) {
   await ensureSchema();
@@ -26,8 +26,8 @@ export async function POST(request) {
       return NextResponse.json({ error: 'User not found.' }, { status: 404 });
     }
 
-    const passwordHash = await hashPassword(password);
-    if (res.rows[0].password_hash !== passwordHash) {
+    const isValid = await verifyPassword(password, res.rows[0].password_hash);
+    if (!isValid) {
       return NextResponse.json({ error: 'Incorrect password.' }, { status: 401 });
     }
 

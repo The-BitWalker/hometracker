@@ -119,6 +119,9 @@ function formatFamilyCode(input) {
 // ============================================================
 function CustomModal({ modal, onClose }) {
   const [inputValue, setInputValue] = useState('');
+  const [isHoldingConfirm, setIsHoldingConfirm] = useState(false);
+  const confirmTimeoutRef = useRef(null);
+  
   useEffect(() => { setInputValue(''); }, [modal]);
 
   if (!modal) return null;
@@ -150,9 +153,36 @@ function CustomModal({ modal, onClose }) {
             <button onClick={onClose} className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs rounded-xl transition active:scale-95 cursor-pointer">
               Cancel
             </button>
-            <button onClick={() => { modal.onConfirm(inputValue); onClose(); }} className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-xl shadow-md transition active:scale-95 cursor-pointer">
-              {modal.confirmText || 'Confirm'}
-            </button>
+            {modal.requireHold ? (
+              <button 
+                onPointerDown={() => {
+                  setIsHoldingConfirm(true);
+                  confirmTimeoutRef.current = setTimeout(() => {
+                    setIsHoldingConfirm(false);
+                    if (modal.onConfirm) {
+                      modal.onConfirm(inputValue);
+                      onClose();
+                    }
+                  }, 2000);
+                }}
+                onPointerUp={() => {
+                  setIsHoldingConfirm(false);
+                  clearTimeout(confirmTimeoutRef.current);
+                }}
+                onPointerLeave={() => {
+                  setIsHoldingConfirm(false);
+                  clearTimeout(confirmTimeoutRef.current);
+                }}
+                className="flex-1 py-2.5 bg-rose-600 text-white font-extrabold text-xs rounded-xl shadow-md transition cursor-pointer relative overflow-hidden select-none"
+              >
+                <div className={`absolute left-0 top-0 h-full bg-rose-800/30 transition-all ease-linear ${isHoldingConfirm ? 'w-full duration-[2000ms]' : 'w-0 duration-200'}`} />
+                <span className="relative z-10">{isHoldingConfirm ? 'Hold to confirm...' : (modal.confirmText || 'Confirm')}</span>
+              </button>
+            ) : (
+              <button onClick={() => { modal.onConfirm(inputValue); onClose(); }} className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-xl shadow-md transition active:scale-95 cursor-pointer">
+                {modal.confirmText || 'Confirm'}
+              </button>
+            )}
           </div>
         ) : (
           <button onClick={onClose} className="w-full py-2.5 bg-[#5621bf] hover:bg-[#431799] text-white font-extrabold text-xs rounded-xl shadow-md transition active:scale-95 cursor-pointer">
@@ -340,7 +370,8 @@ export default function DashboardPage() {
   const [adminFeedbackList, setAdminFeedbackList] = useState([]);
   const [adminUserSearch, setAdminUserSearch] = useState('');
   const [adminNoteInput, setAdminNoteInput] = useState('');
-  const [selectedReqId, setSelectedReqId] = useState(null);
+  const [adminSettings, setAdminSettings] = useState(null);
+  const [savingAdminSettings, setSavingAdminSettings] = useState(false);
   const [loadingAdminData, setLoadingAdminData] = useState(false);
   const [collapsedRequests, setCollapsedRequests] = useState(false);
   const [collapsedFeedback, setCollapsedFeedback] = useState(false);
@@ -591,7 +622,7 @@ export default function DashboardPage() {
       return;
     }
 
-    if (!proReqWhyPro.trim() || !proReqProblems.trim()) {
+    if (!proReqWhyPro.trim() || !proReqProblems.trim() || !proReqFeatures.trim()) {
       setModal({ type: 'error', title: 'Incomplete Form', message: 'Please answer all required questions in the application form.' });
       return;
     }
@@ -630,8 +661,8 @@ export default function DashboardPage() {
   // ---- Submit Monthly Pro Feedback ----
   const handleSubmitFeedback = async (e) => {
     e?.preventDefault();
-    if (!fbWorkedWell.trim() || !fbImprovement.trim()) {
-      setModal({ type: 'error', title: 'Incomplete Form', message: 'Please share what worked well and what could be improved.' });
+    if (!fbSituations.trim() || !fbWorkedWell.trim() || !fbProblems.trim() || !fbImprovement.trim()) {
+      setModal({ type: 'error', title: 'Incomplete Form', message: 'Please share what worked well, what could be improved, and other details requested.' });
       return;
     }
 
@@ -677,6 +708,11 @@ export default function DashboardPage() {
       if (tab === 'stats') {
         const res = await fetch('/api/admin/stats').then((r) => r.json());
         if (res.stats) setAdminStats(res.stats);
+        
+        try {
+          const settingsRes = await fetch('/api/admin/settings').then((r) => r.json());
+          if (settingsRes.settings) setAdminSettings(settingsRes.settings);
+        } catch(e) {}
       } else if (tab === 'requests') {
         const res = await fetch('/api/admin/requests').then((r) => r.json());
         if (res.requests) setAdminRequests(res.requests);
@@ -713,6 +749,27 @@ export default function DashboardPage() {
       }
     } catch (err) {
       setModal({ type: 'error', title: 'Error', message: err.message });
+    }
+  };
+
+  const handleUpdateSurveyInterval = async (intervalMode) => {
+    setSavingAdminSettings(true);
+    try {
+      const res = await fetch('/api/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ setting_key: 'survey_interval_mode', setting_value: intervalMode }),
+      });
+      if (res.ok) {
+        setAdminSettings(prev => ({ ...prev, survey_interval_mode: intervalMode }));
+        setModal({ type: 'success', title: 'Settings Updated', message: 'Survey interval updated successfully.' });
+      } else {
+        setModal({ type: 'error', title: 'Error', message: 'Failed to update settings.' });
+      }
+    } catch (err) {
+      setModal({ type: 'error', title: 'Error', message: err.message });
+    } finally {
+      setSavingAdminSettings(false);
     }
   };
 
@@ -1393,6 +1450,7 @@ export default function DashboardPage() {
       title: 'Delete Account',
       message: 'This action is permanent and cannot be undone. Please enter your password to confirm.',
       confirmText: 'Delete Forever',
+      requireHold: true,
       input: {
         type: 'password',
         placeholder: 'Password',
@@ -1420,7 +1478,7 @@ export default function DashboardPage() {
       </button>
 
       {/* Dropdown Menu */}
-      <div ref={notificationDropdownRef} style={{ display: 'none', opacity: 0, visibility: 'hidden' }} className="absolute right-0 mt-2 w-72 sm:w-80 max-w-[calc(100vw-24px)] bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-200/90 z-[1001] origin-top-right overflow-hidden flex-col max-h-[400px]">
+      <div ref={notificationDropdownRef} style={{ display: 'none', opacity: 0, visibility: 'hidden' }} className="absolute -right-4 sm:right-0 mt-2 w-72 sm:w-80 max-w-[calc(100vw-24px)] bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-200/90 z-[1001] origin-top sm:origin-top-right overflow-hidden flex-col max-h-[400px]">
         <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
           <h3 className="text-sm font-black text-slate-900">Notifications</h3>
           {unreadNotifications.length > 0 && (
@@ -1585,7 +1643,7 @@ export default function DashboardPage() {
       </button>
 
       {/* Dropdown Menu */}
-      <div ref={profileDropdownRef} style={{ display: 'none', opacity: 0, visibility: 'hidden' }} className="absolute right-0 mt-2 w-64 sm:w-72 max-w-[calc(100vw-24px)] bg-white/95 backdrop-blur-xl rounded-2xl p-3 sm:p-4 shadow-2xl border border-slate-200/90 z-[1001] max-h-[85vh] overflow-y-auto">
+      <div ref={profileDropdownRef} style={{ display: 'none', opacity: 0, visibility: 'hidden' }} className="absolute -right-2 sm:right-0 mt-2 w-64 sm:w-72 max-w-[calc(100vw-24px)] bg-white/95 backdrop-blur-xl rounded-2xl p-3 sm:p-4 shadow-2xl border border-slate-200/90 z-[1001] max-h-[85vh] origin-top sm:origin-top-right overflow-y-auto">
           {/* Profile Header */}
           <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
             <div className="w-10 h-10 rounded-full avatar-gradient text-white flex items-center justify-center text-sm font-black shadow-sm shrink-0">
@@ -2129,6 +2187,28 @@ export default function DashboardPage() {
                     <p className="text-[9px] sm:text-[10px] font-black uppercase text-slate-400">Family Circles</p>
                     <p className="text-xl sm:text-2xl font-black text-slate-900">{adminStats.total_circles}</p>
                   </div>
+                </div>
+
+                <div className="mt-8 bg-slate-50 border border-slate-200 rounded-2xl p-4 sm:p-6 space-y-4">
+                  <h4 className="font-black text-slate-900 text-xs sm:text-sm border-b border-slate-200 pb-2">Global System Settings</h4>
+                  
+                  {adminSettings && (
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div>
+                        <p className="text-sm font-bold text-slate-800">Monthly Survey Interval</p>
+                        <p className="text-xs font-medium text-slate-500 max-w-lg mt-0.5">Choose how often Pro members are prompted for the feedback survey. Testing mode runs every minute. Production mode requires feedback on the 1st day of the next month following their previous submission.</p>
+                      </div>
+                      <select 
+                        value={adminSettings?.survey_interval_mode || 'test_mode'}
+                        onChange={(e) => handleUpdateSurveyInterval(e.target.value)}
+                        disabled={savingAdminSettings}
+                        className="p-2 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-700 shadow-sm min-w-[200px]"
+                      >
+                        <option value="test_mode">Test Mode (1 Minute)</option>
+                        <option value="first_of_next_month">Production (1st of Next Month)</option>
+                      </select>
+                    </div>
+                  )}
                 </div>
 
                 <div className="p-4 sm:p-5 rounded-2xl bg-purple-50/60 border border-purple-200/80 space-y-2.5 sm:space-y-3">

@@ -65,9 +65,17 @@ export async function GET(request) {
       }
     }
 
-    // Check feedback due for active Pro members (TESTING INTERVAL: 1 MINUTE)
+    // Check feedback due for active Pro members
     let feedbackDue = false;
     if (isPlus) {
+      let intervalMode = 'test_mode';
+      try {
+        const settingsRes = await db.execute(`SELECT setting_value FROM app_settings WHERE setting_key = 'survey_interval_mode'`);
+        if (settingsRes.rows.length > 0) intervalMode = settingsRes.rows[0].setting_value;
+      } catch (e) {
+        // Fallback if table doesn't exist yet
+      }
+
       const fbRes = await db.execute({
         sql: `SELECT created_at FROM pro_feedback WHERE family_code = ? ORDER BY created_at DESC LIMIT 1`,
         args: [user.family_code],
@@ -75,9 +83,23 @@ export async function GET(request) {
       if (fbRes.rows.length === 0) {
         feedbackDue = !isPostponed;
       } else {
-        const lastFbTime = new Date(fbRes.rows[0].created_at).getTime();
-        const TEST_INTERVAL_ONE_MIN = 60 * 1000; // 1 minute interval for testing
-        feedbackDue = (Date.now() - lastFbTime) >= TEST_INTERVAL_ONE_MIN && !isPostponed;
+        const lastFbTime = new Date(fbRes.rows[0].created_at);
+        
+        if (intervalMode === 'first_of_next_month') {
+          // Calculate 1st day of the next month
+          let nextMonthYear = lastFbTime.getFullYear();
+          let nextMonth = lastFbTime.getMonth() + 1;
+          if (nextMonth > 11) {
+            nextMonth = 0;
+            nextMonthYear++;
+          }
+          const nextDueTime = new Date(nextMonthYear, nextMonth, 1).getTime();
+          feedbackDue = (Date.now() >= nextDueTime) && !isPostponed;
+        } else {
+          // 'test_mode' or default
+          const TEST_INTERVAL_ONE_MIN = 60 * 1000; // 1 minute interval for testing
+          feedbackDue = (Date.now() - lastFbTime.getTime()) >= TEST_INTERVAL_ONE_MIN && !isPostponed;
+        }
       }
     }
 

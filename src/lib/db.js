@@ -150,6 +150,19 @@ export async function ensureSchema() {
       )
     `);
 
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS app_settings (
+        setting_key TEXT PRIMARY KEY,
+        setting_value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+
+    // Ensure default setting for survey interval exists
+    try {
+      await db.execute(`INSERT OR IGNORE INTO app_settings (setting_key, setting_value, updated_at) VALUES ('survey_interval_mode', 'test_mode', ?)`, [new Date().toISOString()]);
+    } catch (_) {}
+
     // Ensure notification_state has current_location_name column
     try {
       await db.execute(`ALTER TABLE notification_state ADD COLUMN current_location_name TEXT`);
