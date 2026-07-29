@@ -10,20 +10,82 @@ import gsap from 'gsap';
 // ============================================================
 const AT_HOME_THRESHOLD_KM = 0.1; // 100 meters
 
-// Helper: Check if current time falls within 4-hour curfew window
-function checkIsPastCurfew(targetHomeTime) {
-  if (!targetHomeTime) return false;
-  const [curfewH, curfewM] = targetHomeTime.split(':').map(Number);
-  if (isNaN(curfewH) || isNaN(curfewM)) return false;
-  const curfewMinutes = curfewH * 60 + curfewM;
+// Helper: Get active curfew violations for a member across all locations
+function getActiveCurfewViolations(memberLat, memberLng, home, extraLocations, customCurfews, isPlusCircle) {
+  const violations = [];
+  if (!memberLat || !memberLng) return violations;
+  
   const now = new Date();
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
-  const windowEnd = (curfewMinutes + 4 * 60) % 1440;
-  if (curfewMinutes < windowEnd) {
-    return currentMinutes >= curfewMinutes && currentMinutes < windowEnd;
+  const currentDay = now.getDay(); // 0-6 (Sun-Sat)
+
+  const checkRule = (rule, locLat, locLng, locName, isHomeLoc) => {
+    if (!rule || !rule.time) return;
+    if (rule.days && rule.days.length > 0 && !rule.days.includes(currentDay)) return;
+
+    const [h, m] = rule.time.split(':').map(Number);
+    if (isNaN(h) || isNaN(m)) return;
+
+    const curfewMinutes = h * 60 + m;
+    const windowEnd = (curfewMinutes + 4 * 60) % 1440;
+    
+    let inWindow = false;
+    if (curfewMinutes < windowEnd) {
+      inWindow = currentMinutes >= curfewMinutes && currentMinutes < windowEnd;
+    } else {
+      inWindow = currentMinutes >= curfewMinutes || currentMinutes < windowEnd;
+    }
+
+    if (inWindow) {
+      const dist = calculateDistanceKm(memberLat, memberLng, locLat, locLng);
+      if (dist > AT_HOME_THRESHOLD_KM) {
+        violations.push({ locationName: locName, time: rule.time, isHome: isHomeLoc });
+      }
+    }
+  };
+
+  if (isPlusCircle && customCurfews && Object.keys(customCurfews).length > 0) {
+    if (customCurfews['home'] && home?.home_lat) {
+      customCurfews['home'].forEach(rule => checkRule(rule, home.home_lat, home.home_lng, 'Home', true));
+    }
+    if (extraLocations && extraLocations.length > 0) {
+      extraLocations.forEach(loc => {
+        if (customCurfews[loc.id] && loc.lat) {
+          customCurfews[loc.id].forEach(rule => checkRule(rule, loc.lat, loc.lng, loc.name, false));
+        }
+      });
+    }
   } else {
-    return currentMinutes >= curfewMinutes || currentMinutes < windowEnd;
+    if (home?.target_home_time && home?.home_lat) {
+      const basicRule = { time: home.target_home_time, days: [] };
+      checkRule(basicRule, home.home_lat, home.home_lng, 'Home', true);
+    }
   }
+  
+  return violations;
+}
+
+// Helper: Get formatted text for today's curfew for a specific location
+function getTodayCurfewText(locId, homeTargetTime, customCurfews, isPlusCircle) {
+  if (!isPlusCircle || !customCurfews || !customCurfews[locId]) {
+    if (locId === 'home') return homeTargetTime || 'Not set';
+    return 'Not set';
+  }
+  
+  const currentDay = new Date().getDay();
+  const rules = customCurfews[locId];
+  if (!rules || rules.length === 0) {
+    if (locId === 'home') return homeTargetTime || 'Not set';
+    return 'Not set';
+  }
+  
+  // Find rule for today (or rule with no specific days assigned)
+  const todayRule = rules.find(r => !r.days || r.days.length === 0 || r.days.includes(currentDay));
+  if (todayRule && todayRule.time) {
+    return todayRule.time;
+  }
+  
+  return 'No curfew today';
 }
 
 // ============================================================
@@ -60,11 +122,11 @@ function CustomModal({ modal, onClose }) {
   useEffect(() => { setInputValue(''); }, [modal]);
 
   if (!modal) return null;
-  const iconBgClass = modal.type === 'error' ? 'bg-rose-100 text-rose-600' : modal.type === 'warning' ? 'bg-amber-100 text-amber-600' : 'bg-emerald-100 text-emerald-600';
+  const iconBgClass = modal.type === 'error' ? 'bg-rose-100 text-rose-600' : modal.type === 'warning' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600';
   const iconClass = modal.type === 'error' ? 'fa-circle-exclamation' : modal.type === 'warning' ? 'fa-triangle-exclamation' : 'fa-circle-check';
   return (
-    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
-      <div className="glass-panel w-full max-w-sm rounded-2xl p-5 shadow-2xl space-y-4 text-center border border-white/60">
+    <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4 overflow-y-auto">
+      <div className="glass-panel w-full max-w-sm rounded-2xl p-5 shadow-2xl space-y-4 text-center border border-white/60 max-h-[90vh] overflow-y-auto my-auto">
         <div className={`w-12 h-12 rounded-full mx-auto flex items-center justify-center text-xl ${iconBgClass}`}>
           <i className={`fa-solid ${iconClass}`} />
         </div>
@@ -301,6 +363,7 @@ export default function DashboardPage() {
   const [editName, setEditName] = useState('');
   const [editAddress, setEditAddress] = useState('');
   const [editTargetTime, setEditTargetTime] = useState('');
+  const [editCustomCurfews, setEditCustomCurfews] = useState([]);
   const [showAddForm, setShowAddForm] = useState(false);
   
   const [notifications, setNotifications] = useState([]);
@@ -314,7 +377,7 @@ export default function DashboardPage() {
   const mapInstanceRef = useRef(null);
   const markersRef = useRef({});
   const routeLinesRef = useRef([]);
-  const trailPolylineRef = useRef(null);
+
   const profileMenuRef = useRef(null);
   const profileDropdownRef = useRef(null);
   const notificationMenuRef = useRef(null);
@@ -347,6 +410,30 @@ export default function DashboardPage() {
       document.removeEventListener('touchstart', handleClickOutside);
     };
   }, []);
+
+  // Lock body scroll when any modal is open
+  const isAnyModalOpen = Boolean(
+    modal ||
+      showProRequestModal ||
+      showSettings ||
+      showTip ||
+      showFeedbackModal ||
+      showAdminModal ||
+      showPaymentInfoModal ||
+      (subscription?.is_plus && subscription?.feedback_due && !user?.is_deactivated && !subscription?.user_is_deactivated) ||
+      (user?.is_deactivated || subscription?.user_is_deactivated)
+  );
+
+  useEffect(() => {
+    if (isAnyModalOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isAnyModalOpen]);
 
   // Settings Accordion Animation
   useEffect(() => {
@@ -459,7 +546,29 @@ export default function DashboardPage() {
       if (membersRes.members) setMembers(membersRes.members);
       if (notifRes.notifications) setNotifications(notifRes.notifications);
       if (locRes.locations) setExtraLocations(locRes.locations);
-      if (subRes && !subRes.error) setSubscription(subRes);
+      
+      if (subRes && !subRes.error) {
+        setSubscription(subRes);
+        
+        // Downgrade cleanup check
+        const isPlus = subRes.is_plus || user?.pro_status === 'approved' || 
+                       (subRes.subscription_tier && subRes.subscription_tier.toLowerCase() !== 'basic' && subRes.subscription_tier.toLowerCase() !== 'free');
+                       
+        const hasExtraLocs = locRes.locations && locRes.locations.length > 1;
+        const hasCustomCurfews = subRes.custom_curfews && Object.keys(subRes.custom_curfews).length > 0;
+        
+        if (!isPlus && (hasExtraLocs || hasCustomCurfews)) {
+           fetch('/api/circle/downgrade-cleanup', { method: 'POST' }).then(() => {
+             Promise.all([
+               fetch('/api/circle/locations').then(r => r.json()),
+               fetch('/api/circle/subscription').then(r => r.json()).catch(() => ({ subscription_tier: 'basic' }))
+             ]).then(([newLoc, newSub]) => {
+               if (newLoc.locations) setExtraLocations(newLoc.locations);
+               if (newSub && !newSub.error) setSubscription(newSub);
+             });
+           }).catch(console.error);
+        }
+      }
     } catch (e) {
       console.error('Refresh error:', e);
     }
@@ -478,7 +587,7 @@ export default function DashboardPage() {
   const handleSubmitProRequest = async (e) => {
     e?.preventDefault();
     if (user?.role !== 'parent') {
-      setModal({ type: 'warning', title: 'Parent Account Required', message: 'Only parent accounts can apply for HomeTracker Pro Beta access.' });
+      setModal({ type: 'warning', title: 'Parent Account Required', message: 'Only parent accounts can apply for HomeTracker Pro access.' });
       return;
     }
 
@@ -505,7 +614,7 @@ export default function DashboardPage() {
         setModal({
           type: 'success',
           title: 'Application Submitted!',
-          message: 'Your HomeTracker Pro Beta application has been submitted for admin review. You will be notified once reviewed.',
+          message: 'Your HomeTracker Pro application has been submitted for admin review. You will be notified once reviewed.',
         });
         await refreshData();
       } else {
@@ -639,28 +748,7 @@ export default function DashboardPage() {
     }
   };
 
-  const handlePostponeFeedback = async () => {
-    try {
-      const res = await fetch('/api/circle/subscription/feedback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'postpone' }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setModal({
-          type: 'info',
-          title: 'Review Postponed',
-          message: 'Your monthly review has been postponed for 24 hours. Your account is temporarily on Basic limits for 1 day.',
-        });
-        await refreshData();
-      } else {
-        setModal({ type: 'error', title: 'Error', message: data.error });
-      }
-    } catch (err) {
-      setModal({ type: 'error', title: 'Error', message: err.message });
-    }
-  };
+
 
   const handleRemindParentSurvey = async () => {
     try {
@@ -866,7 +954,9 @@ export default function DashboardPage() {
         const initials = (member.name || 'C').substring(0, 2).toUpperCase();
         const distKm = home?.home_lat ? calculateDistanceKm(member.current_lat, member.current_lng, home.home_lat, home.home_lng) : 999;
         const isAtHome = distKm <= AT_HOME_THRESHOLD_KM;
-        const isPastCurfew = !isAtHome && checkIsPastCurfew(home?.target_home_time);
+        const isPlusCircleMap = subscription?.is_plus || user?.pro_status === 'approved' || (subscription?.subscription_tier && subscription?.subscription_tier.toLowerCase() !== 'basic' && subscription?.subscription_tier.toLowerCase() !== 'free');
+        const violations = getActiveCurfewViolations(member.current_lat, member.current_lng, home, extraLocations, subscription?.custom_curfews, isPlusCircleMap);
+        const isPastCurfew = violations.length > 0;
 
         const memberIcon = L.divIcon({
           className: 'custom-pin-wrap',
@@ -881,12 +971,13 @@ export default function DashboardPage() {
         );
 
         let popupText;
-        if (isAtHome) {
-          popupText = `<div class="p-1 text-center font-bold"><p class="text-xs text-slate-900">${member.name}</p><p class="text-[10px] text-emerald-600 mt-1 font-extrabold">At Home</p></div>`;
+        if (distKm < 0.1) {
+          popupText = `<div class="p-1 text-center font-bold"><p class="text-xs text-slate-900">${member.name}</p><p class="text-[10px] text-[#5621bf] mt-1 font-extrabold">At Home</p></div>`;
         } else if (extraLoc) {
-          popupText = `<div class="p-1 text-center font-bold"><p class="text-xs text-slate-900">${member.name}</p><p class="text-[10px] text-amber-600 mt-1 font-extrabold">📍 At ${extraLoc.name}</p>${eta ? `<p class="text-[9px] text-slate-500 mt-0.5">${eta.distance_km} km from Home &middot; ~${eta.duration_min} min</p>` : `<p class="text-[9px] text-slate-500 mt-0.5">${distKm.toFixed(1)} km from Home</p>`}</div>`;
+          popupText = `<div class="p-1 text-center font-bold"><p class="text-xs text-slate-900">${member.name}</p><p class="text-[10px] text-[#5621bf] mt-1 font-extrabold">📍 At ${extraLoc.name}</p>${eta ? `<p class="text-[9px] text-slate-500 mt-0.5">${eta.distance_km} km from Home &middot; ~${eta.duration_min} min</p>` : `<p class="text-[9px] text-slate-500 mt-0.5">${distKm.toFixed(1)} km from Home</p>`}</div>`;
         } else if (isPastCurfew) {
-          popupText = `<div class="p-1 text-center font-bold"><p class="text-xs text-slate-900">${member.name}</p><p class="text-[10px] text-rose-600 mt-1 font-black">⚠️ Past Curfew (${home.target_home_time})</p>${eta ? `<p class="text-[9px] text-slate-500 mt-0.5">${eta.distance_km} km &middot; ~${eta.duration_min} min</p>` : ''}</div>`;
+          const v = violations[0];
+          popupText = `<div class="p-1 text-center font-bold"><p class="text-xs text-slate-900">${member.name}</p><p class="text-[10px] text-rose-600 mt-1 font-black">⚠️ Past Curfew (${v.locationName} @ ${v.time})</p>${eta ? `<p class="text-[9px] text-slate-500 mt-0.5">${eta.distance_km} km &middot; ~${eta.duration_min} min</p>` : ''}</div>`;
         } else if (eta) {
           popupText = `<div class="p-1 text-center font-bold"><p class="text-xs text-slate-900">${member.name}</p><p class="text-[10px] text-[#5621bf] mt-1">${eta.distance_km} km &middot; ~${eta.duration_min} min by bike</p></div>`;
         } else {
@@ -918,7 +1009,7 @@ export default function DashboardPage() {
 
     if (bounds.length > 1) map.fitBounds(bounds, { padding: [50, 50] });
     else if (bounds.length === 1) map.setView(bounds[0], 14);
-  }, [home, members, extraLocations, etaCache]);
+  }, [home, members, extraLocations, etaCache, subscription, user]);
 
   // ---- Actions ----
   const handleSignOut = async () => {
@@ -926,51 +1017,7 @@ export default function DashboardPage() {
     window.location.href = '/auth';
   };
 
-  const handleViewBreadcrumbs = async (member) => {
-    try {
-      const res = await fetch(`/api/circle/history?user_id=${member.id}`);
-      const data = await res.json();
-      if (!res.ok) {
-        setModal({ type: 'error', title: 'Error', message: data.error || 'Failed to fetch location history.' });
-        return;
-      }
 
-      if (!data.breadcrumbs || data.breadcrumbs.length === 0) {
-        setModal({
-          type: 'warning',
-          title: 'No Trail History',
-          message: `No location breadcrumbs recorded for ${member.name} in the last ${data.history_limit_days === 30 ? '30 days' : '24 hours'}.`,
-        });
-        return;
-      }
-
-      // Draw polyline on map
-      if (mapInstanceRef.current && window.L) {
-        if (trailPolylineRef.current) {
-          mapInstanceRef.current.removeLayer(trailPolylineRef.current);
-        }
-
-        const latLngs = data.breadcrumbs.map((b) => [b.lat, b.lng]);
-        const polyline = window.L.polyline(latLngs, {
-          color: subscription?.is_plus ? '#5621bf' : '#3b82f6',
-          weight: 4,
-          opacity: 0.85,
-          dashArray: '6, 6',
-        }).addTo(mapInstanceRef.current);
-
-        trailPolylineRef.current = polyline;
-        mapInstanceRef.current.fitBounds(polyline.getBounds(), { padding: [40, 40] });
-
-        setModal({
-          type: 'success',
-          title: `${data.history_limit_days === 30 ? '30-Day Pro Trail' : '24-Hour Trail'} Loaded`,
-          message: `Showing ${data.breadcrumbs.length} recorded location points for ${member.name}.`,
-        });
-      }
-    } catch (e) {
-      setModal({ type: 'error', title: 'Error', message: e.message });
-    }
-  };
 
   const fallbackCopyTextToClipboard = (text) => {
     try {
@@ -995,13 +1042,14 @@ export default function DashboardPage() {
     if (!code) return;
 
     if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-      navigator.clipboard.writeText(code).catch(() => fallbackCopyTextToClipboard(code));
+      navigator.clipboard.writeText(inviteLink);
+      setCopyIcon('fa-solid fa-check text-[#5621bf]');
+      setTimeout(() => setCopyIcon('fa-regular fa-copy'), 2000);
     } else {
       fallbackCopyTextToClipboard(code);
+      setCopyIcon('fa-solid fa-check text-[#5621bf]');
+      setTimeout(() => setCopyIcon('fa-regular fa-copy'), 2000);
     }
-
-    setCopyIcon('fa-solid fa-check text-emerald-500');
-    setTimeout(() => setCopyIcon('fa-regular fa-copy'), 2000);
   };
 
   const handleLeaveCircle = () => {
@@ -1106,7 +1154,7 @@ export default function DashboardPage() {
     }
 
     const totalSavedCount = (homeIsSet ? 1 : 0) + extraLocations.length;
-    const isPlusCircle = subscription?.is_plus || (subscription?.subscription_tier && subscription?.subscription_tier.toLowerCase() !== 'basic' && subscription?.subscription_tier.toLowerCase() !== 'free');
+    const isPlusCircle = subscription?.is_plus || user?.pro_status === 'approved' || (subscription?.subscription_tier && subscription?.subscription_tier.toLowerCase() !== 'basic' && subscription?.subscription_tier.toLowerCase() !== 'free');
     const maxAllowed = isPlusCircle ? 50 : 2;
     if (totalSavedCount >= maxAllowed) {
       setModal({
@@ -1191,6 +1239,7 @@ export default function DashboardPage() {
     setEditName(currentName || '');
     setEditAddress(currentAddress || '');
     setEditTargetTime(currentCurfew || home?.target_home_time || '20:00');
+    setEditCustomCurfews(subscription?.custom_curfews?.[locId] || []);
   };
 
   const handleSaveLocationEdit = async (locId) => {
@@ -1210,6 +1259,16 @@ export default function DashboardPage() {
           }),
         });
         if (res.ok) {
+          // If Pro user, also save custom curfews
+          if (isPlusCircle) {
+            const updatedCurfews = { ...(subscription?.custom_curfews || {}) };
+            updatedCurfews['home'] = editCustomCurfews;
+            await fetch('/api/circle/curfews', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ custom_curfews: updatedCurfews }),
+            });
+          }
           setEditingLocId(null);
           setModal({ type: 'success', title: 'Home Base Updated', message: 'Home address and curfew time updated successfully.' });
           await refreshData();
@@ -1227,6 +1286,16 @@ export default function DashboardPage() {
           body: JSON.stringify({ id: locId, name: editName.trim(), address: editAddress.trim() }),
         });
         if (res.ok) {
+          // If Pro user, also save custom curfews
+          if (isPlusCircle) {
+            const updatedCurfews = { ...(subscription?.custom_curfews || {}) };
+            updatedCurfews[locId] = editCustomCurfews;
+            await fetch('/api/circle/curfews', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ custom_curfews: updatedCurfews }),
+            });
+          }
           setEditingLocId(null);
           setModal({ type: 'success', title: 'Location Updated', message: 'Location address updated successfully.' });
           await refreshData();
@@ -1351,7 +1420,7 @@ export default function DashboardPage() {
       </button>
 
       {/* Dropdown Menu */}
-      <div ref={notificationDropdownRef} style={{ display: 'none', opacity: 0, visibility: 'hidden' }} className="absolute right-[-40px] sm:right-0 mt-2 w-72 sm:w-80 max-w-[calc(100vw-24px)] bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-200/90 z-[1001] origin-top-right overflow-hidden flex-col max-h-[400px]">
+      <div ref={notificationDropdownRef} style={{ display: 'none', opacity: 0, visibility: 'hidden' }} className="absolute right-0 mt-2 w-72 sm:w-80 max-w-[calc(100vw-24px)] bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-200/90 z-[1001] origin-top-right overflow-hidden flex-col max-h-[400px]">
         <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
           <h3 className="text-sm font-black text-slate-900">Notifications</h3>
           {unreadNotifications.length > 0 && (
@@ -1380,6 +1449,121 @@ export default function DashboardPage() {
       </div>
     </div>
   );
+
+  const renderAdvancedCurfewEditor = () => {
+    if (!isPlusCircle) return null;
+    
+    const handleAddCurfewRule = () => {
+      setEditCustomCurfews([...(editCustomCurfews || []), { time: '20:00', days: [] }]);
+    };
+
+    const handleUpdateCurfewRule = (index, field, value) => {
+      const updated = [...(editCustomCurfews || [])];
+      
+      if (field === 'days' || field === 'time') {
+        const checkDays = field === 'days' ? value : (updated[index].days || []);
+        const checkTime = field === 'time' ? value : (updated[index].time || '20:00');
+
+        // Prevent exact day + time overlap globally across ALL locations and the current location's rules
+        for (const day of checkDays) {
+          // 1. Check current location rules
+          const conflictingLocal = updated.findIndex((r, i) => i !== index && r.days && r.days.includes(day) && r.time === checkTime);
+          if (conflictingLocal !== -1) {
+            setModal({
+              type: 'warning',
+              title: 'Curfew Overlap',
+              message: 'Curfew times cannot overlap! This exact time is already assigned to another rule in this location on the same day.'
+            });
+            return;
+          }
+          
+          // 2. Check other locations
+          const allCurfews = subscription?.custom_curfews || {};
+          let conflictOther = false;
+          for (const locKey of Object.keys(allCurfews)) {
+            if (locKey === editingLocId) continue;
+            const otherRules = allCurfews[locKey] || [];
+            if (otherRules.some(r => r.days && r.days.includes(day) && r.time === checkTime)) {
+              conflictOther = true;
+              break;
+            }
+          }
+          if (conflictOther) {
+            setModal({
+              type: 'warning',
+              title: 'Curfew Overlap',
+              message: 'Curfew times cannot overlap! This exact time is already assigned to a curfew in another location on the same day.'
+            });
+            return;
+          }
+        }
+      }
+      
+      updated[index][field] = value;
+      setEditCustomCurfews(updated);
+    };
+
+    const handleRemoveCurfewRule = (index) => {
+      setEditCustomCurfews((editCustomCurfews || []).filter((_, i) => i !== index));
+    };
+
+    const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+    return (
+      <div className="pt-3 border-t border-purple-200/50 mt-3">
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-[10px] font-black uppercase text-[#5621bf]">Advanced Curfews (Pro)</label>
+          <button type="button" onClick={handleAddCurfewRule} className="text-[9px] font-extrabold px-2 py-1 rounded-md bg-purple-100 text-[#5621bf] hover:bg-purple-200 cursor-pointer shadow-sm transition">
+            <i className="fa-solid fa-plus text-[8px]" /> Add Rule
+          </button>
+        </div>
+        
+        {(!editCustomCurfews || editCustomCurfews.length === 0) ? (
+          <div className="p-3 bg-purple-50/50 border border-purple-100 rounded-xl text-center">
+            <p className="text-[10px] font-semibold text-purple-400">No advanced curfews set. Uses basic curfew.</p>
+          </div>
+        ) : (
+          <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1">
+            {editCustomCurfews.map((rule, idx) => (
+              <div key={idx} className="bg-white p-2.5 rounded-xl border border-purple-200 shadow-sm">
+                <div className="flex items-center gap-2 mb-2">
+                  <i className="fa-solid fa-clock text-purple-300 text-xs" />
+                  <input 
+                    type="time" 
+                    value={rule.time || '20:00'} 
+                    onChange={(e) => handleUpdateCurfewRule(idx, 'time', e.target.value)} 
+                    className="flex-1 px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-700 outline-none focus:border-[#5621bf]" 
+                  />
+                  <button type="button" onClick={() => handleRemoveCurfewRule(idx)} className="w-7 h-7 rounded-lg bg-rose-50 text-rose-500 flex items-center justify-center hover:bg-rose-100 transition cursor-pointer">
+                    <i className="fa-solid fa-trash-can text-xs" />
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {daysOfWeek.map((d, dIdx) => {
+                    const isActive = rule.days && rule.days.includes(dIdx);
+                    return (
+                      <button 
+                        key={dIdx} 
+                        type="button"
+                        onClick={() => {
+                          const currentDays = rule.days || [];
+                          const newDays = isActive ? currentDays.filter(x => x !== dIdx) : [...currentDays, dIdx];
+                          handleUpdateCurfewRule(idx, 'days', newDays);
+                        }} 
+                        className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-md border transition-colors cursor-pointer flex-1 text-center ${isActive ? 'bg-[#5621bf] text-white border-[#5621bf]' : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'}`}
+                      >
+                        {d}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const renderProfileDropdown = () => (
     <div className="relative" ref={profileMenuRef}>
@@ -1415,7 +1599,7 @@ export default function DashboardPage() {
                   ? 'bg-blue-100 text-blue-700 border border-blue-200'
                   : isParent
                   ? 'bg-[#5621bf]/10 text-[#5621bf]'
-                  : 'bg-amber-100 text-amber-800'
+                  : 'bg-purple-100 text-purple-800'
               }`}>
                 {user?.role === 'admin' ? 'Admin Account' : isParent ? 'Parent Account' : 'Child / Teen Account'}
               </span>
@@ -1445,20 +1629,22 @@ export default function DashboardPage() {
               <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
             </a>
 
-            <a
-              href="/#pricing"
-              className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 font-extrabold text-xs transition-colors duration-150 group cursor-pointer mb-1"
-            >
-              <span className="flex items-center gap-2">Subscription Plans</span>
-              <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
-            </a>
+            {isParent && !subscription?.is_plus && (
+              <a
+                href="/#pricing"
+                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 font-extrabold text-xs transition-colors duration-150 group cursor-pointer mb-1"
+              >
+                <span className="flex items-center gap-2">Subscription Plans</span>
+                <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
+              </a>
+            )}
 
             {!isParent && user?.family_code && (
               <button
                 onClick={handleLeaveCircle}
                 onMouseEnter={hoverScaleIn}
                 onMouseLeave={hoverScaleOut}
-                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-600 font-extrabold text-xs transition-colors duration-150 group cursor-pointer mb-1"
+                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-600 font-extrabold text-xs transition-colors duration-150 group cursor-pointer mb-1"
               >
                 <span className="flex items-center gap-2">Leave Family Circle</span>
                 <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
@@ -1469,7 +1655,7 @@ export default function DashboardPage() {
                 onClick={handleDeleteCircle}
                 onMouseEnter={hoverScaleIn}
                 onMouseLeave={hoverScaleOut}
-                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-700 font-extrabold text-xs transition-colors duration-150 group cursor-pointer mb-1"
+                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 font-extrabold text-xs transition-colors duration-150 group cursor-pointer mb-1"
               >
                 <span className="flex items-center gap-2">Disband Family Circle</span>
                 <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
@@ -1492,6 +1678,25 @@ export default function DashboardPage() {
             >
               <span className="flex items-center gap-2">Delete Account</span>
               <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
+            </button>
+          </div>
+
+          {/* Legal Links */}
+          <div className="pt-2 mt-2 border-t border-slate-100 flex items-center justify-center gap-3 text-[10px] font-semibold text-slate-500">
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'privacy'}))}
+              className="hover:text-[#5621bf] transition-colors cursor-pointer"
+            >
+              Privacy Policy
+            </button>
+            <span className="text-slate-300">•</span>
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'terms'}))}
+              className="hover:text-[#5621bf] transition-colors cursor-pointer"
+            >
+              Terms of Service
             </button>
           </div>
         </div>
@@ -1566,17 +1771,46 @@ export default function DashboardPage() {
         ? `You are at ${extraLoc.name}. ~${travelMins} min travel (${distText} km from Home).`
         : `${distText} km from Home (~${travelMins} min travel).`;
 
+      // Handle curfew violation text
+      const violations = getActiveCurfewViolations(selfEta ? undefined : home.home_lat, selfEta ? undefined : home.home_lng, home, extraLocations, subscription?.custom_curfews, isPlusCircle);
+      // Wait, we need the member's current location to check violations
+      // Since childStatus computation doesn't have the member's current_lat easily available here without re-fetching, 
+      // but wait, this is child's own status so they are the current user. Let's assume we fetch violations for the user
+      // if we have their location, but the backend handles `childStatus` checking differently. Let's fix this part safely.
+      
+      let earliestViolation = null;
+      if (user?.role === 'child') {
+        const curViolations = getActiveCurfewViolations(childStatus?.current_lat || 0, childStatus?.current_lng || 0, home, extraLocations, subscription?.custom_curfews, isPlusCircle);
+        if (curViolations.length > 0) earliestViolation = curViolations[0];
+      }
+
       if (home.target_home_time && typeof home.target_home_time === 'string' && home.target_home_time.includes(':')) {
         const parts = home.target_home_time.split(':').map(Number);
         const tH = isNaN(parts[0]) ? null : parts[0];
         const tM = isNaN(parts[1]) ? null : parts[1];
 
         if (tH !== null && tM !== null) {
-          const isPastCurfewNow = checkIsPastCurfew(home.target_home_time);
+          const isPastCurfewNow = earliestViolation ? true : false;
+          // Fallback to basic curfew check if we don't have location yet
+          let basicPastCurfew = false;
+          if (!earliestViolation) {
+            // Re-implement the basic time check just for the warning if no location available
+            const curfewMinutes = tH * 60 + tM;
+            const now = new Date();
+            const currentMinutes = now.getHours() * 60 + now.getMinutes();
+            const windowEnd = (curfewMinutes + 4 * 60) % 1440;
+            if (curfewMinutes < windowEnd) {
+              basicPastCurfew = currentMinutes >= curfewMinutes && currentMinutes < windowEnd;
+            } else {
+              basicPastCurfew = currentMinutes >= curfewMinutes || currentMinutes < windowEnd;
+            }
+          }
 
-          if (isPastCurfewNow) {
+          if (isPastCurfewNow || basicPastCurfew) {
+            const locName = earliestViolation ? earliestViolation.locationName : 'Home';
+            const curTime = earliestViolation ? earliestViolation.time : home.target_home_time;
             leaveByText = 'IMMEDIATELY';
-            subtitle = `Past Curfew (${home.target_home_time})! ${extraLoc ? `You are at ${extraLoc.name}, ` : ''}${distText} km away (~${travelMins} min). Leave immediately!`;
+            subtitle = `Past Curfew (${locName} @ ${curTime})! ${extraLoc ? `You are at ${extraLoc.name}, ` : ''}${distText} km away (~${travelMins} min). Leave immediately!`;
           } else {
             const curfewDate = new Date();
             curfewDate.setHours(tH, tM, 0, 0);
@@ -1651,7 +1885,7 @@ export default function DashboardPage() {
 
     const dist = calculateDistanceKm(member.current_lat, member.current_lng, home.home_lat, home.home_lng);
     if (dist <= AT_HOME_THRESHOLD_KM) {
-      return { label: 'At Home', color: 'text-emerald-600', badge: 'bg-emerald-100 text-emerald-700', isHome: true };
+      return { label: 'At Home', color: 'text-[#5621bf]', badge: 'bg-purple-100 text-[#5621bf]', isHome: true };
     }
 
     // Check if at an extra saved location
@@ -1659,23 +1893,37 @@ export default function DashboardPage() {
       (loc) => loc.lat && loc.lng && calculateDistanceKm(member.current_lat, member.current_lng, loc.lat, loc.lng) <= AT_HOME_THRESHOLD_KM
     );
 
-    const isPastCurfew = checkIsPastCurfew(home?.target_home_time);
+    const violations = getActiveCurfewViolations(member.current_lat, member.current_lng, home, extraLocations, subscription?.custom_curfews, isPlusCircle);
     const eta = etaCache[member.id];
 
     if (extraLoc) {
+      // Check if they have a curfew violation for this specific extra location
+      // Wait, if they are AT the location, getActiveCurfewViolations won't flag it as a violation for THAT location,
+      // but it could flag it for Home if they are supposed to be at Home.
+      if (violations.length > 0) {
+        const v = violations[0];
+        return {
+          label: `Past Curfew (${v.locationName})`,
+          color: 'text-rose-600',
+          sublabel: `Should be at ${v.locationName} @ ${v.time}`,
+          badge: 'bg-rose-100 text-rose-700 font-black',
+          isPastCurfew: true,
+        };
+      }
       return {
         label: `At ${extraLoc.name}`,
-        color: 'text-amber-600',
+        color: 'text-[#5621bf]',
         sublabel: eta ? `~${eta.duration_min} min from Home (${eta.distance_km} km)` : `${dist.toFixed(1)} km from Home`,
-        badge: 'bg-amber-100 text-amber-800 font-extrabold border border-amber-200/60',
+        badge: 'bg-purple-100 text-[#5621bf] font-extrabold border border-purple-200/60',
         isExtraLocation: true,
         locationName: extraLoc.name,
       };
     }
 
-    if (isPastCurfew) {
+    if (violations.length > 0) {
+      const v = violations[0];
       return {
-        label: 'Past Curfew',
+        label: `Past Curfew (${v.locationName})`,
         color: 'text-rose-600',
         sublabel: eta ? `~${eta.duration_min} min away (${eta.distance_km} km)` : `${dist.toFixed(1)} km away`,
         badge: 'bg-rose-100 text-rose-700 font-black',
@@ -1869,14 +2117,14 @@ export default function DashboardPage() {
                     <p className="text-[9px] sm:text-[10px] font-black uppercase text-[#5621bf]">Pro Members</p>
                     <p className="text-xl sm:text-2xl font-black text-[#5621bf]">{adminStats.pro_users}</p>
                   </div>
-                  <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl bg-amber-50 border border-amber-200 text-center space-y-0.5 sm:space-y-1">
-                    <p className="text-[9px] sm:text-[10px] font-black uppercase text-amber-800">Pending Requests</p>
-                    <p className="text-xl sm:text-2xl font-black text-amber-900">{adminStats.pending_requests}</p>
-                  </div>
-                  <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl bg-emerald-50 border border-emerald-200 text-center space-y-0.5 sm:space-y-1">
-                    <p className="text-[9px] sm:text-[10px] font-black uppercase text-emerald-800">Feedback Reviews</p>
-                    <p className="text-xl sm:text-2xl font-black text-emerald-900">{adminStats.total_feedback}</p>
-                  </div>
+                  <div className="p-4 rounded-2xl bg-purple-50 border border-purple-200 shadow-xs text-center space-y-1">
+                      <p className="text-[10px] font-black uppercase text-purple-800">Pending Requests</p>
+                      <p className="text-2xl font-black text-purple-900">{adminStats.pending_requests}</p>
+                    </div>
+                    <div className="p-4 rounded-2xl bg-indigo-50 border border-indigo-200 shadow-xs text-center space-y-1">
+                      <p className="text-[10px] font-black uppercase text-indigo-800">Feedback Reviews</p>
+                      <p className="text-2xl font-black text-indigo-900">{adminStats.total_feedback}</p>
+                    </div>
                   <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl bg-slate-50 border border-slate-200 text-center space-y-0.5 sm:space-y-1">
                     <p className="text-[9px] sm:text-[10px] font-black uppercase text-slate-400">Family Circles</p>
                     <p className="text-xl sm:text-2xl font-black text-slate-900">{adminStats.total_circles}</p>
@@ -1936,7 +2184,7 @@ export default function DashboardPage() {
                           </span>
                         </div>
                         <span className={`self-start sm:self-auto px-2.5 py-0.5 rounded-full text-[9px] sm:text-[10px] font-black uppercase ${
-                          req.status === 'approved' ? 'bg-emerald-100 text-emerald-800' :
+                          req.status === 'approved' ? 'bg-purple-100 text-purple-800' :
                           req.status === 'rejected' ? 'bg-rose-100 text-rose-800' :
                           'bg-amber-100 text-amber-900'
                         }`}>
@@ -2042,7 +2290,7 @@ export default function DashboardPage() {
                           </td>
                           <td className="p-3">
                             <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
-                              u.pro_status === 'approved' ? 'bg-emerald-100 text-emerald-800' :
+                              u.pro_status === 'approved' ? 'bg-purple-100 text-purple-800' :
                               u.pro_status === 'requested' ? 'bg-amber-100 text-amber-800' :
                               u.pro_status === 'revoked' ? 'bg-rose-100 text-rose-800' :
                               'bg-slate-100 text-slate-600'
@@ -2178,17 +2426,17 @@ export default function DashboardPage() {
       {renderToast()}
 
       {/* ===== Header ===== */}
-      <header className="w-full px-2.5 sm:px-6 py-2 sm:py-3 flex items-center justify-between z-[1000] shrink-0 relative bg-white/80 backdrop-blur-md border-b border-slate-200/80">
+      <header className="w-full px-2 sm:px-6 py-2 sm:py-3 flex items-center justify-between z-[1000] shrink-0 relative bg-white/80 backdrop-blur-md border-b border-slate-200/80">
         <div className="flex items-center gap-1 sm:gap-4 shrink-0">
           <Link href="/" className="flex items-center gap-1 sm:gap-2 group">
             <Image src="/logo.png" alt="HOMETRACKER Logo" width={36} height={36} className="w-6 h-6 sm:w-9 sm:h-9 object-contain group-hover:scale-105 transition-transform duration-300" />
-            <span className="font-extrabold text-xs sm:text-lg tracking-tight text-slate-900">
+            <span className="hidden min-[340px]:inline font-extrabold text-xs sm:text-lg tracking-tight text-slate-900">
               HOME<span className="text-[#5621bf]">TRACKER</span>
             </span>
           </Link>
         </div>
 
-        <div className="flex items-center gap-1 sm:gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2.5">
           {user?.role === 'admin' && (
             <div className="flex items-center gap-1 sm:gap-1.5">
               <button
@@ -2211,7 +2459,7 @@ export default function DashboardPage() {
                   fetchAdminData('requests');
                 }}
                 className="h-8 sm:h-10 px-2 sm:px-3 rounded-xl bg-white/90 border border-slate-200 text-slate-700 text-[10px] sm:text-xs font-extrabold hover:border-[#5621bf] hover:text-[#5621bf] shadow-sm transition flex items-center gap-1 sm:gap-1.5 cursor-pointer shrink-0"
-                title="Pro Beta Applications"
+                title="Pro Applications"
               >
                 <i className="fa-solid fa-paper-plane text-xs text-[#5621bf]" />
                 <span className="hidden md:inline">Applications</span>
@@ -2259,6 +2507,7 @@ export default function DashboardPage() {
                 ? 'bg-[#5621bf] text-white border-purple-400'
                 : 'bg-white/80 backdrop-blur-sm text-slate-700 border-slate-200 hover:bg-white'
             }`}
+            title={isPlusCircle ? 'HomeTracker Pro Member' : 'HomeTracker Basic Member'}
           >
             <i className={`fa-solid ${isPlusCircle ? 'fa-shield-halved text-white' : 'fa-shield text-[#5621bf]'} text-xs`} />
             <span className="truncate">{isPlusCircle ? 'PRO' : 'BASIC'}</span>
@@ -2267,8 +2516,14 @@ export default function DashboardPage() {
 
           {/* Center Home button */}
           {homeIsSet && (
-            <button onClick={centerMapOnHome} onMouseEnter={hoverScaleIn} onMouseLeave={hoverScaleOut} className="h-8 sm:h-10 px-1.5 sm:px-3 rounded-xl bg-white/80 backdrop-blur-sm border border-slate-200 text-slate-700 text-[10px] sm:text-xs font-bold shadow-sm hover:bg-white transition flex items-center gap-1 sm:gap-1.5 cursor-pointer shrink-0">
-              <i className="fa-solid fa-house text-[#5621bf] text-[10px] sm:text-[11px]" />
+            <button 
+              onClick={centerMapOnHome} 
+              onMouseEnter={hoverScaleIn} 
+              onMouseLeave={hoverScaleOut} 
+              className="h-8 sm:h-10 px-2 sm:px-3 rounded-xl bg-white/80 backdrop-blur-sm border border-slate-200 text-slate-700 text-[10px] sm:text-xs font-bold shadow-sm hover:bg-white transition flex items-center gap-1 sm:gap-1.5 cursor-pointer shrink-0"
+              title="Center Map on Home"
+            >
+              <i className="fa-solid fa-house text-[#5621bf] text-xs sm:text-[11px]" />
               <span className="hidden md:inline">Center Home</span>
             </button>
           )}
@@ -2343,7 +2598,7 @@ export default function DashboardPage() {
                 <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
                   <i className="fa-solid fa-map-location-dot text-[#5621bf]" /> Saved Locations
                 </p>
-                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${totalSavedLocations >= maxLocationsAllowed ? 'bg-amber-100 text-amber-800' : 'bg-purple-100 text-[#5621bf]'}`}>
+                <span className={`text-[10px] font-black ${totalSavedLocations >= maxLocationsAllowed ? 'text-slate-500' : 'text-[#5621bf]'}`}>
                   {totalSavedLocations} / {maxLocationsAllowed} Locations
                 </span>
               </div>
@@ -2375,6 +2630,9 @@ export default function DashboardPage() {
                           className="w-full px-2.5 py-1.5 text-xs font-bold rounded-lg border border-purple-300 focus:border-[#5621bf] outline-none bg-white"
                         />
                       </div>
+                      
+                      {renderAdvancedCurfewEditor()}
+
                       <div className="flex justify-end gap-1.5 pt-1">
                         <button 
                           onClick={() => handleSaveLocationEdit('home')}
@@ -2400,7 +2658,7 @@ export default function DashboardPage() {
                           </div>
                           <p className="text-[10px] font-semibold text-slate-500 truncate">{home?.home_address || 'Click edit to set address'}</p>
                           <p className="text-[9px] font-extrabold text-[#5621bf] mt-0.5 flex items-center gap-1">
-                            <i className="fa-solid fa-clock text-[8px]" /> Curfew: {home?.target_home_time || 'Not set'}
+                            <i className="fa-solid fa-clock text-[8px]" /> Curfew: {getTodayCurfewText('home', home?.target_home_time, subscription?.custom_curfews, isPlusCircle)}
                           </p>
                         </div>
                       </div>
@@ -2438,16 +2696,30 @@ export default function DashboardPage() {
                           placeholder="Location Name (e.g. School)"
                           className="w-full px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-teal-300 focus:border-[#0d9488] outline-none bg-white"
                         />
-                        <AddressInputWithAutocomplete
-                          value={editAddress}
-                          onChange={setEditAddress}
-                          placeholder="Search or enter Address"
-                          className="w-full px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-teal-300 focus:border-[#0d9488] outline-none bg-white"
-                        />
-                        <div className="flex justify-end gap-1.5">
+                        <div className="space-y-2">
+                          <label className="text-[9px] font-black uppercase text-slate-400">Location Name</label>
+                          <input
+                            value={editName}
+                            onChange={(e) => setEditName(e.target.value)}
+                            className="w-full px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 focus:border-[#5621bf] outline-none bg-white"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black uppercase text-slate-400">Address</label>
+                          <AddressInputWithAutocomplete
+                            value={editAddress}
+                            onChange={setEditAddress}
+                            placeholder="Location Address"
+                            className="w-full px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 focus:border-[#5621bf] outline-none bg-white"
+                          />
+                        </div>
+                        
+                        {renderAdvancedCurfewEditor()}
+
+                        <div className="flex justify-end gap-1.5 pt-2">
                           <button 
                             onClick={() => handleSaveLocationEdit(loc.id)}
-                            className="px-3 py-1 bg-[#0d9488] hover:bg-[#0f766e] text-white text-xs font-extrabold rounded-lg shadow-sm cursor-pointer"
+                            className="px-3 py-1 bg-[#5621bf] hover:bg-[#431799] text-white text-xs font-extrabold rounded-lg shadow-sm cursor-pointer"
                           >
                             Save Changes
                           </button>
@@ -2459,12 +2731,15 @@ export default function DashboardPage() {
                           onClick={() => flyToLocation(loc.lat, loc.lng, `loc_${loc.id}`)}
                           className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer"
                         >
-                          <div className="w-8 h-8 rounded-lg bg-[#0d9488] text-white flex items-center justify-center text-xs shrink-0 shadow-sm">
+                          <div className="w-8 h-8 rounded-lg bg-slate-500 text-white flex items-center justify-center text-xs shrink-0 shadow-sm">
                             <i className="fa-solid fa-location-dot" />
                           </div>
                           <div className="min-w-0 flex-1">
                             <p className="text-xs font-black text-slate-900 truncate">{loc.name}</p>
                             <p className="text-[10px] font-semibold text-slate-500 truncate">{loc.address}</p>
+                            <p className="text-[9px] font-extrabold text-teal-700 mt-0.5 flex items-center gap-1">
+                              <i className="fa-solid fa-clock text-[8px]" /> Curfew: {getTodayCurfewText(loc.id, null, subscription?.custom_curfews, isPlusCircle)}
+                            </p>
                           </div>
                         </div>
                         {isParent && (
@@ -2472,7 +2747,7 @@ export default function DashboardPage() {
                             <div className="relative group/hint">
                               <button 
                                 onClick={() => startEditLocation(loc.id, loc.name, loc.address)}
-                                className="w-7 h-7 rounded-lg hover:bg-teal-200/50 text-slate-400 hover:text-[#0d9488] flex items-center justify-center transition cursor-pointer"
+                                className="w-7 h-7 rounded-lg hover:bg-slate-200/50 text-slate-400 hover:text-[#5621bf] flex items-center justify-center transition cursor-pointer"
                                 title="Change Address"
                               >
                                 <i className="fa-solid fa-pen-to-square text-xs" />
@@ -2483,7 +2758,7 @@ export default function DashboardPage() {
                             </div>
                             <button 
                               onClick={() => handleDeleteLocation(loc)}
-                              className="w-7 h-7 rounded-lg hover:bg-rose-100 text-slate-400 hover:text-rose-600 flex items-center justify-center transition cursor-pointer"
+                              className="w-7 h-7 rounded-lg hover:bg-rose-100 text-slate-400 hover:text-rose-600 flex items-center justify-center transition-colors cursor-pointer"
                               title="Remove location"
                             >
                               <i className="fa-solid fa-trash-can text-xs" />
@@ -2511,18 +2786,18 @@ export default function DashboardPage() {
                           value={newLocName} 
                           onChange={(e) => setNewLocName(e.target.value)}
                           placeholder="Name (e.g. School, Work, Gym)"
-                          className="w-full px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 focus:border-[#0d9488] outline-none bg-white"
+                          className="w-full px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 focus:border-[#5621bf] outline-none bg-white"
                         />
                         <AddressInputWithAutocomplete
                           value={newLocAddress}
                           onChange={setNewLocAddress}
                           placeholder="Search or enter Address (e.g. 100 Main St)"
-                          className="w-full px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 focus:border-[#0d9488] outline-none bg-white"
+                          className="w-full px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 focus:border-[#5621bf] outline-none bg-white"
                         />
                         <button
                           onClick={() => { handleAddLocation(); setShowAddForm(false); }}
                           disabled={!newLocName.trim() || !newLocAddress.trim()}
-                          className={`w-full py-2 font-extrabold text-xs rounded-lg transition flex items-center justify-center gap-1.5 ${!newLocName.trim() || !newLocAddress.trim() ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-[#0d9488] hover:bg-[#0f766e] text-white active:scale-95 cursor-pointer shadow-sm'}`}
+                          className={`w-full py-2 font-extrabold text-xs rounded-lg transition flex items-center justify-center gap-1.5 ${!newLocName.trim() || !newLocAddress.trim() ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-[#5621bf] hover:bg-[#431799] text-white active:scale-95 cursor-pointer shadow-sm'}`}
                         >
                           <i className="fa-solid fa-plus" /> Save New Location
                         </button>
@@ -2530,20 +2805,20 @@ export default function DashboardPage() {
                     ) : (
                       <button
                         onClick={() => setShowAddForm(true)}
-                        className="w-full py-2 border border-dashed border-teal-300 hover:border-teal-500 bg-teal-50/50 hover:bg-teal-50 text-[#0d9488] font-extrabold text-xs rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
+                        className="w-full py-2 border border-dashed border-slate-300 hover:border-[#5621bf] bg-slate-50/50 hover:bg-slate-50 text-slate-600 font-extrabold text-xs rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
                       >
                         <i className="fa-solid fa-plus" /> Add Location (e.g. School)
                       </button>
                     )}
                   </div>
                 ) : (
-                  !isPlusCircle && (
+                  !isPlusCircle && isParent && (
                     <div className="pt-2 border-t border-slate-100">
                       <button
                         onClick={() => setShowProRequestModal(true)}
-                        className="w-full py-2 bg-gradient-to-r from-[#5621bf]/10 to-purple-50 hover:from-[#5621bf]/20 hover:to-purple-100 border border-[#5621bf]/30 text-[#5621bf] font-extrabold text-xs rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
+                        className="w-full py-2 bg-gradient-to-r from-slate-100 to-slate-50 hover:from-slate-200 hover:to-slate-100 border border-slate-300 text-slate-700 font-extrabold text-xs rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
                       >
-                        <i className="fa-solid fa-paper-plane text-[#5621bf]" /> Location Limit Reached — Request Pro Access
+                        <i className="fa-solid fa-paper-plane text-slate-500" /> Location Limit Reached — Request Pro Access
                       </button>
                     </div>
                   )
@@ -2562,10 +2837,10 @@ export default function DashboardPage() {
                 <div className="p-3.5 rounded-2xl bg-gradient-to-r from-purple-950 via-[#5621bf] to-purple-900 text-white shadow-md space-y-2">
                   <div className="flex items-center justify-between font-black text-xs">
                     <span className="flex items-center gap-1.5">
-                      <i className="fa-solid fa-comments text-amber-300" />
+                      <i className="fa-solid fa-comments text-purple-300" />
                       <span>Monthly Pro Review Due</span>
                     </span>
-                    <span className="text-[9px] bg-amber-400 text-slate-950 px-2 py-0.5 rounded-full font-black uppercase">
+                    <span className="text-[9px] text-purple-200 font-black uppercase">
                       Required
                     </span>
                   </div>
@@ -2574,15 +2849,15 @@ export default function DashboardPage() {
                   </p>
                   <button
                     onClick={() => setShowFeedbackModal(true)}
-                    className="w-full py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
+                    className="w-full py-2 bg-purple-100 hover:bg-white text-[#5621bf] font-black text-xs rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
                   >
-                    <i className="fa-solid fa-paper-plane text-xs text-slate-950" /> Complete Monthly Review
+                    <i className="fa-solid fa-pen-nib" /> Start Quick Review
                   </button>
                 </div>
               )}
 
               {/* Application Pending Banner */}
-              {!subscription?.is_plus && subscription?.pro_status === 'requested' && (
+              {!subscription?.is_plus && subscription?.pro_status === 'requested' && isParent && (
                 <div className="p-3 rounded-xl bg-purple-50 border border-purple-200 text-purple-950 text-xs font-semibold space-y-1 shadow-xs">
                   <div className="flex items-center justify-between font-black">
                     <span className="flex items-center gap-1.5 text-[#5621bf]">
@@ -2591,18 +2866,18 @@ export default function DashboardPage() {
                     </span>
                   </div>
                   <p className="text-[11px] text-purple-900 leading-tight">
-                    Your Pro Beta application is currently being reviewed by our admin team. You will receive a notification upon decision.
+                    Your Pro application is currently being reviewed by our admin team. You will receive a notification upon decision.
                   </p>
                 </div>
               )}
 
               {/* Free Tier Apply Banner */}
-              {!subscription?.is_plus && subscription?.pro_status !== 'requested' && (
+              {!isPlusCircle && subscription?.pro_status !== 'requested' && isParent && (
                 <div className="p-3 rounded-xl bg-purple-50/80 border border-purple-200/90 text-purple-900 text-xs font-semibold space-y-1.5 shadow-xs">
                   <div className="flex items-center justify-between font-black">
                     <span className="flex items-center gap-1.5 text-[#5621bf]">
-                      <i className="fa-solid fa-sparkles text-amber-500" />
-                      <span>HomeTracker Pro Beta Program</span>
+                      <i className="fa-solid fa-sparkles text-[#5621bf]" />
+                      <span>HomeTracker Pro Membership</span>
                     </span>
                     <button
                       onClick={() => setShowPaymentInfoModal(true)}
@@ -2645,34 +2920,22 @@ export default function DashboardPage() {
                       <div className="text-right shrink-0 flex items-center gap-2">
                         <div className="min-w-[60px]">
                           {status.isHome ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-extrabold">
+                            <span className="inline-flex items-center gap-1 text-[10px] font-extrabold text-[#5621bf]">
                               <i className="fa-solid fa-house-chimney text-[8px]" /> At Home
                             </span>
                           ) : status.isExtraLocation ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-extrabold border border-amber-200/60">
-                              <i className="fa-solid fa-location-dot text-[8px] text-amber-600" /> {status.label}
+                            <span className="inline-flex items-center gap-1 text-[10px] font-extrabold text-[#5621bf]">
+                              <i className="fa-solid fa-location-dot text-[8px]" /> {status.label}
                             </span>
                           ) : status.isPastCurfew ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 text-[10px] font-black animate-pulse">
-                              <i className="fa-solid fa-triangle-exclamation text-[8px]" /> Past Curfew
+                            <span className="inline-flex items-center gap-1 text-[10px] font-black text-rose-600 animate-pulse">
+                              <i className="fa-solid fa-triangle-exclamation text-[8px]" /> {status.label}
                             </span>
                           ) : (
                             <p className={`text-xs font-extrabold ${status.color}`}>{status.label}</p>
                           )}
                         </div>
-                        <button
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); handleViewBreadcrumbs(member); }}
-                          className={`px-2 py-1 rounded-lg text-[9px] font-extrabold transition flex items-center gap-1 cursor-pointer border ${
-                            subscription?.is_plus
-                              ? 'bg-purple-100 hover:bg-purple-200 text-[#5621bf] border-purple-200'
-                              : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200'
-                          }`}
-                          title={subscription?.is_plus ? 'View 30-Day Pro Trail' : 'View 24h Trail'}
-                        >
-                          <i className="fa-solid fa-route text-[8px]" />
-                          <span>{subscription?.is_plus ? '30D Trail' : '24h Trail'}</span>
-                        </button>
+
                         {isParent && !mp && (
                           <button onClick={(e) => { e.stopPropagation(); handleKickMember(member); }} className="w-6 h-6 rounded-md bg-slate-100 hover:bg-rose-100 text-slate-400 hover:text-rose-600 flex items-center justify-center transition-colors cursor-pointer shrink-0" title="Remove Member">
                             <i className="fa-solid fa-xmark text-xs" />
@@ -2692,9 +2955,9 @@ export default function DashboardPage() {
       {/* ============================================================ */}
       {/* 1. HOMETRACKER PRO BETA REQUEST MODAL                         */}
       {/* ============================================================ */}
-      {showProRequestModal && !subscription?.is_plus && (
-        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-150">
-          <div className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl border border-slate-200 relative space-y-4 max-h-[90vh] overflow-y-auto">
+      {showProRequestModal && !subscription?.is_plus && isParent && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-3 sm:p-6 overflow-y-auto animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl p-5 sm:p-8 max-w-lg w-full shadow-2xl border border-slate-200 relative space-y-4 max-h-[90vh] overflow-y-auto my-auto">
             <button
               onClick={() => setShowProRequestModal(false)}
               className="absolute top-4 right-4 w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center transition-colors cursor-pointer"
@@ -2703,9 +2966,6 @@ export default function DashboardPage() {
             </button>
 
             <div className="text-center">
-              <span className="px-3.5 py-1 rounded-full bg-purple-100 text-[#5621bf] text-[10px] font-black uppercase tracking-wider">
-                Community Beta Program
-              </span>
               <h3 className="text-2xl font-black text-slate-900 mt-2">Request HomeTracker Pro Access</h3>
               <p className="text-xs text-slate-500 font-medium mt-1">
                 Apply for lifetime Pro access for your family circle in exchange for monthly product feedback.
@@ -2818,8 +3078,8 @@ export default function DashboardPage() {
       {/* 2. DEACTIVATED MEMBER (PRO REVOKED / CAPACITY EXCEEDED) MODAL*/}
       {/* ============================================================ */}
       {(user?.is_deactivated || subscription?.user_is_deactivated) && (
-        <div className="fixed inset-0 z-[9999999] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-white/95 backdrop-blur-2xl rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border-2 border-rose-500/80 relative space-y-5 text-center">
+        <div className="fixed inset-0 z-[9999999] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-white/95 backdrop-blur-2xl rounded-3xl p-5 sm:p-8 max-w-md w-full shadow-2xl border-2 border-rose-500/80 relative space-y-5 text-center max-h-[90vh] overflow-y-auto my-auto">
             <div className="w-16 h-16 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto text-3xl shadow-sm">
               <i className="fa-solid fa-user-slash" />
             </div>
@@ -2873,10 +3133,10 @@ export default function DashboardPage() {
       {/* 3. BLOCKING MONTHLY PRO FEEDBACK REVIEW OVERLAY               */}
       {/* ============================================================ */}
       {subscription?.is_plus && subscription?.feedback_due && !user?.is_deactivated && !subscription?.user_is_deactivated && (
-        <div className="fixed inset-0 z-[999999] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-[999999] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-in fade-in duration-200">
           {user?.role === 'parent' ? (
             /* PARENT FEEDBACK FORM */
-            <div className="bg-white/95 backdrop-blur-2xl rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl border-2 border-[#5621bf] relative space-y-4 max-h-[92vh] overflow-y-auto">
+            <div className="bg-white/95 backdrop-blur-2xl rounded-3xl p-5 sm:p-8 max-w-lg w-full shadow-2xl border-2 border-[#5621bf] relative space-y-4 max-h-[90vh] overflow-y-auto my-auto">
               <div className="text-center">
                 <div className="w-14 h-14 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center mx-auto text-2xl mb-2 shadow-sm">
                   <i className="fa-solid fa-lock" />
@@ -2999,43 +3259,32 @@ export default function DashboardPage() {
                     <i className="fa-solid fa-spinner animate-spin text-sm" />
                   ) : (
                     <>
-                      <i className="fa-solid fa-unlock text-xs text-amber-300" /> Submit Review &amp; Unblock Circle
+                      <i className="fa-solid fa-unlock text-xs text-purple-300" /> Submit Review &amp; Unblock Circle
                     </>
                   )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handlePostponeFeedback}
-                  className="w-full py-2.5 rounded-2xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-2 mt-2"
-                >
-                  <i className="fa-solid fa-clock-rotate-left text-amber-700" /> Emergency Postpone (1 Day) — Reverts to Basic for 24 hrs
                 </button>
               </form>
             </div>
           ) : (
             /* CHILD / TEEN WAITING MODAL */
-            <div className="bg-white/95 backdrop-blur-2xl rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border-2 border-amber-500/80 relative space-y-5 text-center">
-              <div className="w-16 h-16 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center mx-auto text-3xl shadow-sm animate-pulse">
+            <div className="bg-white/95 backdrop-blur-2xl rounded-3xl p-5 sm:p-8 max-w-md w-full shadow-2xl border-2 border-purple-500/80 relative space-y-5 text-center max-h-[90vh] overflow-y-auto my-auto">
+              <div className="w-16 h-16 rounded-2xl bg-purple-100 text-[#5621bf] flex items-center justify-center mx-auto text-3xl shadow-sm animate-pulse">
                 <i className="fa-solid fa-hourglass-half" />
               </div>
-              <span className="px-3.5 py-1 rounded-full bg-amber-100 text-amber-950 text-[10px] font-black uppercase tracking-wider">
-                Parent Action Required
-              </span>
               <h3 className="text-2xl font-black text-slate-900">
-                Monthly Review <span className="text-amber-600 underline decoration-amber-400 decoration-4 underline-offset-4">Pending</span>
+                Monthly Review <span className="text-[#5621bf] underline decoration-purple-400 decoration-4 underline-offset-4">Pending</span>
               </h3>
               <p className="text-xs text-slate-600 font-semibold leading-relaxed">
                 Your family circle's monthly HomeTracker Pro survey is currently active. Only parent accounts can complete this review. Please ask your circle parent to complete the review to unblock access!
               </p>
-              <div className="p-4 rounded-2xl bg-amber-50/80 border border-amber-200/80 text-left space-y-1.5 text-xs text-amber-900 font-medium">
-                <div className="font-black text-amber-950 flex items-center gap-1.5">
-                  <i className="fa-solid fa-circle-info text-amber-600" /> Instructions:
+              <div className="p-4 rounded-2xl bg-purple-50/80 border border-purple-200/80 text-left space-y-1.5 text-xs text-purple-900 font-medium">
+                <div className="font-black text-purple-950 flex items-center gap-1.5">
+                  <i className="fa-solid fa-circle-info text-[#5621bf]" /> Instructions:
                 </div>
-                <p className="text-[11px] text-amber-800">
+                <p className="text-[11px] text-purple-800">
                   1. Remind your circle parent to open HomeTracker on their device.
                 </p>
-                <p className="text-[11px] text-amber-800">
+                <p className="text-[11px] text-purple-800">
                   2. Once your parent submits the 1-minute feedback survey, your circle features will unblock automatically.
                 </p>
               </div>
@@ -3044,7 +3293,7 @@ export default function DashboardPage() {
                   type="button"
                   onClick={handleRemindParentSurvey}
                   disabled={sendingSurveyRemind}
-                  className="w-full py-3 px-4 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-black text-xs transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+                  className="w-full py-3 px-4 rounded-2xl bg-[#5621bf] hover:bg-[#431799] text-white font-black text-xs transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <i className="fa-solid fa-paper-plane" />
                   {surveyRemindSent ? 'Reminder Sent to Parent!' : sendingSurveyRemind ? 'Sending Reminder...' : 'Remind Parent to Complete Survey'}
@@ -3064,8 +3313,8 @@ export default function DashboardPage() {
 
       {/* Non-blocking feedback modal fallback */}
       {showFeedbackModal && !subscription?.feedback_due && (
-        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-150">
-          <div className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl border border-slate-100 relative space-y-4 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-3 sm:p-6 overflow-y-auto animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl p-5 sm:p-8 max-w-lg w-full shadow-2xl border border-slate-100 relative space-y-4 max-h-[90vh] overflow-y-auto my-auto">
             <button
               onClick={() => setShowFeedbackModal(false)}
               className="absolute top-4 right-4 w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center transition-colors cursor-pointer"
@@ -3074,9 +3323,6 @@ export default function DashboardPage() {
             </button>
 
             <div className="text-center">
-              <span className="px-3.5 py-1 rounded-full bg-purple-100 text-[#5621bf] text-[10px] font-black uppercase tracking-wider">
-                Pro Beta Feedback
-              </span>
               <h3 className="text-2xl font-black text-slate-900 mt-2">
                 Monthly Product <span className="underline decoration-[#5621bf] decoration-2 underline-offset-4">Review</span>
               </h3>
@@ -3144,7 +3390,7 @@ export default function DashboardPage() {
                       Admin
                     </span>
                   </h3>
-                  <p className="text-[11px] text-slate-300 font-semibold">Beta Access Governance &amp; Community Product Reviews</p>
+                  <p className="text-[11px] text-slate-300 font-semibold">Pro Access Governance &amp; Community Product Reviews</p>
                 </div>
               </div>
 
@@ -3221,16 +3467,16 @@ export default function DashboardPage() {
                       <p className="text-2xl font-black text-slate-700">{adminStats.free_users}</p>
                     </div>
                     <div className="p-4 rounded-2xl bg-purple-50 border border-purple-200 shadow-xs text-center space-y-1">
-                      <p className="text-[10px] font-black uppercase text-[#5621bf]">Pro Beta Members</p>
+                      <p className="text-[10px] font-black uppercase text-[#5621bf]">Pro Members</p>
                       <p className="text-2xl font-black text-[#5621bf]">{adminStats.pro_users}</p>
                     </div>
-                    <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 shadow-xs text-center space-y-1">
-                      <p className="text-[10px] font-black uppercase text-amber-800">Pending Requests</p>
-                      <p className="text-2xl font-black text-amber-900">{adminStats.pending_requests}</p>
+                    <div className="p-4 rounded-2xl bg-purple-50 border border-purple-200 shadow-xs text-center space-y-1">
+                      <p className="text-[10px] font-black uppercase text-purple-800">Pending Requests</p>
+                      <p className="text-2xl font-black text-purple-900">{adminStats.pending_requests}</p>
                     </div>
-                    <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 shadow-xs text-center space-y-1">
-                      <p className="text-[10px] font-black uppercase text-emerald-800">Feedback Reviews</p>
-                      <p className="text-2xl font-black text-emerald-900">{adminStats.total_feedback}</p>
+                    <div className="p-4 rounded-2xl bg-indigo-50 border border-indigo-200 shadow-xs text-center space-y-1">
+                      <p className="text-[10px] font-black uppercase text-indigo-800">Feedback Reviews</p>
+                      <p className="text-2xl font-black text-indigo-900">{adminStats.total_feedback}</p>
                     </div>
                     <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs text-center space-y-1">
                       <p className="text-[10px] font-black uppercase text-slate-400">Family Circles</p>
@@ -3241,10 +3487,10 @@ export default function DashboardPage() {
                   <div className="p-5 rounded-3xl bg-gradient-to-r from-purple-50 via-white to-purple-50 border border-purple-200/80 space-y-3 shadow-xs">
                     <h4 className="font-black text-slate-900 text-sm flex items-center gap-2">
                       <i className="fa-solid fa-shield-halved text-[#5621bf]" />
-                      <span className="underline decoration-[#5621bf] decoration-2 underline-offset-4">Pro Beta Governance Principles</span>
+                      <span className="underline decoration-[#5621bf] decoration-2 underline-offset-4">Pro Governance Principles</span>
                     </h4>
                     <ul className="text-xs text-slate-600 space-y-2 leading-relaxed">
-                      <li>• <strong>Community Partnership:</strong> Pro Beta members receive lifetime access in exchange for active monthly product feedback.</li>
+                      <li>• <strong>Community Partnership:</strong> Pro members receive lifetime access in exchange for active monthly product feedback.</li>
                       <li>• <strong>Fair Evaluation:</strong> Review why applicants want Pro access and their intended family setup.</li>
                       <li>• <strong>Quality Enforcement:</strong> Users who repeatedly submit empty or fake feedback can have Pro access revoked by Admins.</li>
                     </ul>
@@ -3257,7 +3503,7 @@ export default function DashboardPage() {
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <h4 className="font-black text-slate-900 text-sm border-b-2 border-[#5621bf] pb-1">
-                      Pro Beta Applications ({adminRequests.length})
+                      Pro Applications ({adminRequests.length})
                     </h4>
                   </div>
 
@@ -3277,7 +3523,7 @@ export default function DashboardPage() {
                             </span>
                           </div>
                           <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${
-                            req.status === 'approved' ? 'bg-emerald-100 text-emerald-800' :
+                            req.status === 'approved' ? 'bg-purple-100 text-purple-800' :
                             req.status === 'rejected' ? 'bg-rose-100 text-rose-800' :
                             'bg-amber-100 text-amber-900'
                           }`}>
@@ -3378,7 +3624,7 @@ export default function DashboardPage() {
                             </td>
                             <td className="p-3.5">
                               <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
-                                u.pro_status === 'approved' ? 'bg-emerald-100 text-emerald-800' :
+                                u.pro_status === 'approved' ? 'bg-purple-100 text-purple-800' :
                                 u.pro_status === 'requested' ? 'bg-amber-100 text-amber-800' :
                                 u.pro_status === 'revoked' ? 'bg-rose-100 text-rose-800' :
                                 'bg-slate-100 text-slate-600'
@@ -3448,25 +3694,25 @@ export default function DashboardPage() {
                               Month: {fb.month_year}
                             </span>
                           </div>
-                          <span className="text-xs font-black text-amber-600 bg-amber-50 border border-amber-200 px-3 py-0.5 rounded-full">
+                          <span className="text-xs font-black text-purple-600 bg-purple-50 border border-purple-200 px-3 py-0.5">
                             Score: {fb.recommendation_score}/10
                           </span>
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs pt-1">
-                          <div className="p-3 rounded-2xl bg-emerald-50/70 border border-emerald-100">
-                            <span className="text-[10px] font-black uppercase text-emerald-800 block mb-0.5">What Worked Well</span>
+                          <div className="p-3 rounded-2xl bg-purple-50/70 border border-purple-100">
+                            <span className="text-[10px] font-black uppercase text-purple-800 block mb-0.5">What Worked Well</span>
                             <p className="font-medium text-slate-800 leading-relaxed">{fb.worked_well}</p>
                           </div>
 
-                          <div className="p-3 rounded-2xl bg-purple-50/70 border border-purple-100">
-                            <span className="text-[10px] font-black uppercase text-purple-800 block mb-0.5">Feature Improvements / Ideas</span>
+                          <div className="p-3 rounded-2xl bg-indigo-50/70 border border-indigo-100">
+                            <span className="text-[10px] font-black uppercase text-indigo-800 block mb-0.5">Feature Improvements / Ideas</span>
                             <p className="font-medium text-slate-800 leading-relaxed">{fb.features_to_improve}</p>
                           </div>
 
                           {fb.problems_encountered && (
-                            <div className="p-3 rounded-2xl bg-amber-50/70 border border-amber-100 sm:col-span-2">
-                              <span className="text-[10px] font-black uppercase text-amber-800 block mb-0.5">Bugs / Issues Reported</span>
+                            <div className="p-3 rounded-2xl bg-slate-50/70 border border-slate-200 sm:col-span-2">
+                              <span className="text-[10px] font-black uppercase text-slate-800 block mb-0.5">Bugs / Issues Reported</span>
                               <p className="font-medium text-slate-800 leading-relaxed">{fb.problems_encountered}</p>
                             </div>
                           )}
@@ -3483,8 +3729,8 @@ export default function DashboardPage() {
 
       {/* Pro Beta Rules Info Modal */}
       {showPaymentInfoModal && (
-        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4 animate-in fade-in duration-150">
-          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-100 relative space-y-4 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-3 sm:p-6 overflow-y-auto animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl p-5 sm:p-8 max-w-md w-full shadow-2xl border border-slate-100 relative space-y-4 max-h-[90vh] overflow-y-auto my-auto">
             <button
               onClick={() => setShowPaymentInfoModal(false)}
               className="absolute top-4 right-4 w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center transition-colors cursor-pointer"
@@ -3497,7 +3743,7 @@ export default function DashboardPage() {
                 <i className="fa-solid fa-shield-halved" />
               </div>
               <h3 className="text-xl font-black text-slate-900">
-                Pro Beta Program <span className="underline decoration-[#5621bf] decoration-2 underline-offset-4">Rules</span>
+                Pro Membership <span className="underline decoration-[#5621bf] decoration-2 underline-offset-4">Rules</span>
               </h3>
               <p className="text-xs text-slate-500 font-medium mt-1">
                 HomeTracker Pro is provided to selected users who help improve the platform through monthly feedback reviews.
@@ -3518,7 +3764,7 @@ export default function DashboardPage() {
               </div>
 
               <div className="flex gap-3 items-start">
-                <div className="w-7 h-7 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0 mt-0.5">
+                <div className="w-7 h-7 rounded-xl bg-purple-100 text-[#5621bf] flex items-center justify-center shrink-0 mt-0.5">
                   <i className="fa-solid fa-comments text-xs" />
                 </div>
                 <div>
@@ -3530,8 +3776,8 @@ export default function DashboardPage() {
               </div>
 
               <div className="flex gap-3 items-start">
-                <div className="w-7 h-7 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 mt-0.5">
-                  <i className="fa-solid fa-triangle-exclamation text-amber-600 text-sm" />
+                <div className="w-7 h-7 rounded-xl bg-slate-100 text-slate-800 flex items-center justify-center shrink-0 mt-0.5">
+                  <i className="fa-solid fa-triangle-exclamation text-slate-600 text-sm" />
                 </div>
                 <div>
                   <p className="font-extrabold text-slate-900">Access &amp; Quality Guidelines</p>
@@ -3542,12 +3788,14 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <button
-              onClick={() => { setShowPaymentInfoModal(false); setShowProRequestModal(true); }}
-              className="w-full py-3 rounded-2xl bg-[#5621bf] hover:bg-[#431799] text-white font-extrabold text-xs shadow-md transition cursor-pointer flex items-center justify-center gap-1.5"
-            >
-              <i className="fa-solid fa-paper-plane text-xs text-white" /> Request Pro Access
-            </button>
+            {isParent && !isPlusCircle && subscription?.pro_status !== 'requested' && (
+              <button
+                onClick={() => { setShowPaymentInfoModal(false); setShowProRequestModal(true); }}
+                className="w-full py-3 rounded-2xl bg-[#5621bf] hover:bg-[#431799] text-white font-extrabold text-xs shadow-md transition cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <i className="fa-solid fa-paper-plane text-xs text-white" /> Request Pro Access
+              </button>
+            )}
           </div>
         </div>
       )}

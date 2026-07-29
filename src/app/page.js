@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { useState, useEffect, useRef } from 'react';
+import gsap from 'gsap';
 
 function WaveBackground({ animated = false }) {
   const animClass = animated ? 'wave-animated' : '';
@@ -16,6 +17,32 @@ function WaveBackground({ animated = false }) {
         <path d="M-200,200 C300,400 600,100 1100,350 C1500,500 1800,200 2100,450 L2100,900 L-200,900 Z" fill="url(#wg2)" />
         <defs><linearGradient id="wg2" x1="100%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stopColor="#5621bf" stopOpacity="0.22"/><stop offset="60%" stopColor="#e2f0ff" stopOpacity="0.6"/><stop offset="100%" stopColor="#fdfdfd" stopOpacity="0.1"/></linearGradient></defs>
       </svg>
+    </div>
+  );
+}
+
+function AnimatedHamburger({ isOpen }) {
+  const topRef = useRef(null);
+  const midRef = useRef(null);
+  const botRef = useRef(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      gsap.to(topRef.current, { y: 6, rotation: 45, transformOrigin: "50% 50%", duration: 0.3, ease: "power2.inOut" });
+      gsap.to(midRef.current, { opacity: 0, duration: 0.3, ease: "power2.inOut" });
+      gsap.to(botRef.current, { y: -6, rotation: -45, transformOrigin: "50% 50%", duration: 0.3, ease: "power2.inOut" });
+    } else {
+      gsap.to(topRef.current, { y: 0, rotation: 0, transformOrigin: "50% 50%", duration: 0.3, ease: "power2.inOut" });
+      gsap.to(midRef.current, { opacity: 1, duration: 0.3, ease: "power2.inOut" });
+      gsap.to(botRef.current, { y: 0, rotation: 0, transformOrigin: "50% 50%", duration: 0.3, ease: "power2.inOut" });
+    }
+  }, [isOpen]);
+
+  return (
+    <div className="relative w-5 h-[14px] flex flex-col justify-between items-center">
+      <div ref={topRef} className="w-full h-[2px] bg-current rounded-full" />
+      <div ref={midRef} className="w-full h-[2px] bg-current rounded-full" />
+      <div ref={botRef} className="w-full h-[2px] bg-current rounded-full" />
     </div>
   );
 }
@@ -53,6 +80,18 @@ export default function HomePage() {
         setLoadingSession(false);
       });
   }, []);
+
+  // Lock body scroll when mobile menu is open
+  useEffect(() => {
+    if (mobileMenuOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [mobileMenuOpen]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -93,7 +132,7 @@ export default function HomePage() {
       fallbackCopyTextToClipboard(code);
     }
 
-    setCopyIcon('fa-solid fa-check text-emerald-500');
+    setCopyIcon('fa-solid fa-check text-[#5621bf]');
     setTimeout(() => setCopyIcon('fa-regular fa-copy'), 2000);
   };
 
@@ -212,7 +251,7 @@ export default function HomePage() {
       {/* Hero Section Container */}
       <div className="min-h-screen min-h-dvh flex flex-col justify-between relative">
         {/* Header */}
-        <header className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between z-30 shrink-0">
+        <header className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between z-[1001] shrink-0 relative">
           <Link href="/" className="flex items-center gap-2 sm:gap-2.5 group">
             <Image src="/logo.png" alt="HOMETRACKER Logo" width={44} height={44} className="w-8 h-8 sm:w-11 sm:h-11 object-contain group-hover:scale-105 transition-transform duration-300" />
             <span className="font-extrabold text-lg sm:text-2xl tracking-tight text-slate-900">
@@ -273,7 +312,7 @@ export default function HomePage() {
                             ? 'bg-blue-100 text-blue-700 border border-blue-200'
                             : isParent
                             ? 'bg-[#5621bf]/10 text-[#5621bf]'
-                            : 'bg-amber-100 text-amber-800'
+                            : 'bg-slate-100 text-slate-800'
                         }`}>
                           {user?.role === 'admin' ? 'Admin Account' : isParent ? 'Parent Account' : 'Child / Teen Account'}
                         </span>
@@ -317,7 +356,7 @@ export default function HomePage() {
                         <button
                           type="button"
                           onClick={handleLeaveCircle}
-                          className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-600 font-extrabold text-xs transition-colors duration-150 group cursor-pointer mb-1"
+                          className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-600 font-extrabold text-xs transition-colors duration-150 group cursor-pointer mb-1"
                         >
                           <span className="flex items-center gap-2">Leave Family Circle</span>
                           <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
@@ -328,7 +367,7 @@ export default function HomePage() {
                         <button
                           type="button"
                           onClick={handleDeleteCircle}
-                          className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-700 font-extrabold text-xs transition-colors duration-150 group cursor-pointer mb-1"
+                          className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 font-extrabold text-xs transition-colors duration-150 group cursor-pointer mb-1"
                         >
                           <span className="flex items-center gap-2">Disband Family Circle</span>
                           <i className="fa-solid fa-chevron-right text-[10px] opacity-60" />
@@ -370,119 +409,139 @@ export default function HomePage() {
           <button 
             type="button" 
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="md:hidden w-10 h-10 flex items-center justify-center rounded-xl bg-white/80 border border-slate-200/80 text-slate-700 hover:text-[#5621bf] hover:border-purple-300 transition-all cursor-pointer shadow-sm active:scale-95 z-40"
+            className="md:hidden w-10 h-10 flex items-center justify-center rounded-xl bg-white/80 border border-slate-200/80 text-slate-700 hover:text-[#5621bf] hover:border-purple-300 transition-all cursor-pointer shadow-sm active:scale-95"
             aria-label="Toggle menu"
           >
-            <i className={`fa-solid ${mobileMenuOpen ? 'fa-xmark' : 'fa-bars'} text-lg`} />
+            <AnimatedHamburger isOpen={mobileMenuOpen} />
           </button>
         </header>
 
         {/* Mobile Navigation Menu */}
         {mobileMenuOpen && (
-          <div className="fixed inset-0 z-20 md:hidden flex flex-col bg-white/95 backdrop-blur-xl animate-in fade-in duration-200">
-            <div className="flex-1 flex flex-col items-center justify-center gap-5 px-6 pt-20 overflow-y-auto">
-              {user ? (
-                <div className="w-full max-w-xs flex flex-col items-center bg-purple-50/60 p-4 rounded-2xl border border-purple-100 mb-2">
-                  <div className="w-12 h-12 rounded-full avatar-gradient text-white font-extrabold text-lg flex items-center justify-center mb-2 shadow-md">
-                    {(user.name || 'U').substring(0, 2).toUpperCase()}
-                  </div>
-                  <p className="font-extrabold text-base text-slate-900">{user.name}</p>
-                  <p className="text-xs text-slate-500 mb-3">{user.email}</p>
+          <div className="fixed inset-0 z-[1000] md:hidden flex flex-col bg-white/95 backdrop-blur-2xl animate-in fade-in slide-in-from-top-4 duration-300 pt-[60px] sm:pt-[76px]">
+            {/* Main Menu Body */}
+            <div className="flex-1 flex flex-col items-center justify-between px-6 pb-6 pt-4 overflow-y-auto">
+              <div className="w-full max-w-xs flex flex-col items-center gap-4">
+                {user ? (
                   <Link
                     href="/dashboard"
                     onClick={() => setMobileMenuOpen(false)}
-                    className="w-full py-3 rounded-xl bg-[#5621bf] text-white font-extrabold text-sm text-center shadow-md flex items-center justify-center gap-2"
+                    className="w-full py-3.5 rounded-xl bg-[#5621bf] text-white font-extrabold text-base text-center shadow-lg flex items-center justify-center mb-2 transition-transform active:scale-95"
                   >
                     <span>Open App Dashboard</span>
                   </Link>
-                </div>
-              ) : (
-                <Link
-                  href="/auth"
-                  onClick={() => setMobileMenuOpen(false)}
-                  className="w-full max-w-xs py-3.5 rounded-xl bg-[#5621bf] text-white font-extrabold text-base text-center shadow-lg flex items-center justify-center gap-2"
-                >
-                  <span>Create or Join a Family</span>
-                </Link>
-              )}
-
-              <button 
-                type="button" 
-                onClick={scrollToPricing} 
-                className="text-xl font-bold text-slate-800 hover:text-[#5621bf] active:scale-95 transition-all cursor-pointer"
-              >
-                Pro Membership
-              </button>
-
-              <button 
-                type="button" 
-                onClick={() => {
-                  setMobileMenuOpen(false);
-                  window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'how-it-works'}));
-                }} 
-                className="text-xl font-bold text-slate-800 hover:text-[#5621bf] active:scale-95 transition-all cursor-pointer"
-              >
-                How It Works
-              </button>
-              <button 
-                type="button" 
-                onClick={() => {
-                  setMobileMenuOpen(false);
-                  window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'safety'}));
-                }} 
-                className="text-xl font-bold text-slate-800 hover:text-[#5621bf] active:scale-95 transition-all cursor-pointer"
-              >
-                Privacy &amp; Safety
-              </button>
-              <button 
-                type="button" 
-                onClick={() => {
-                  setMobileMenuOpen(false);
-                  window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'tips'}));
-                }} 
-                className="text-xl font-bold text-slate-800 hover:text-[#5621bf] active:scale-95 transition-all cursor-pointer"
-              >
-                Tips &amp; Tricks
-              </button>
-              
-              <hr className="w-12 border-t-2 border-slate-200 my-1" />
-
-              {user && (
-                <div className="flex flex-col items-center gap-3 w-full max-w-xs">
-                  {!isParent && user?.family_code && (
-                    <button
-                      type="button"
-                      onClick={handleLeaveCircle}
-                      className="text-sm font-extrabold text-amber-600 hover:text-amber-700 active:scale-95 transition-all cursor-pointer"
-                    >
-                      Leave Family Circle
-                    </button>
-                  )}
-                  {isParent && user?.family_code && (
-                    <button
-                      type="button"
-                      onClick={handleDeleteCircle}
-                      className="text-sm font-extrabold text-amber-700 hover:text-amber-800 active:scale-95 transition-all cursor-pointer"
-                    >
-                      Disband Family Circle
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={handleSignOut}
-                    className="text-sm font-extrabold text-slate-600 hover:text-slate-800 active:scale-95 transition-all cursor-pointer"
+                ) : (
+                  <Link
+                    href="/auth"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="w-full py-3.5 rounded-xl bg-[#5621bf] text-white font-extrabold text-base text-center shadow-lg flex items-center justify-center mb-2 transition-transform active:scale-95"
                   >
-                    Sign Out
+                    <span>Create or Join a Family</span>
+                  </Link>
+                )}
+
+                {/* Main Useful App Links */}
+                <div className="w-full flex flex-col items-center gap-4 py-3">
+                  <button 
+                    type="button" 
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      scrollToPricing();
+                    }} 
+                    className="text-base font-extrabold text-slate-800 hover:text-[#5621bf] active:scale-95 transition-all cursor-pointer"
+                  >
+                    Pro Membership
                   </button>
-                  <button
-                    type="button"
-                    onClick={handleDeleteAccount}
-                    className="text-sm font-extrabold text-rose-600 hover:text-rose-700 active:scale-95 transition-all cursor-pointer"
+
+                  <button 
+                    type="button" 
+                    onClick={() => {
+                      window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'how-it-works'}));
+                    }} 
+                    className="text-base font-extrabold text-slate-800 hover:text-[#5621bf] active:scale-95 transition-all cursor-pointer"
                   >
-                    Delete Account
+                    How It Works
+                  </button>
+
+                  <button 
+                    type="button" 
+                    onClick={() => {
+                      window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'tips'}));
+                    }} 
+                    className="text-base font-extrabold text-slate-800 hover:text-[#5621bf] active:scale-95 transition-all cursor-pointer"
+                  >
+                    Tips &amp; Tricks
                   </button>
                 </div>
-              )}
+
+                {user && (
+                  <div className="flex flex-col items-center gap-2.5 w-full pt-2 border-t border-slate-100">
+                    {!isParent && user?.family_code && (
+                      <button
+                        type="button"
+                        onClick={handleLeaveCircle}
+                        className="text-xs font-bold text-slate-600 hover:text-[#5621bf] active:scale-95 transition-all cursor-pointer"
+                      >
+                        Leave Family Circle
+                      </button>
+                    )}
+                    {isParent && user?.family_code && (
+                      <button
+                        type="button"
+                        onClick={handleDeleteCircle}
+                        className="text-xs font-bold text-slate-600 hover:text-[#5621bf] active:scale-95 transition-all cursor-pointer"
+                      >
+                        Disband Family Circle
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleSignOut}
+                      className="text-xs font-bold text-slate-600 hover:text-slate-900 active:scale-95 transition-all cursor-pointer"
+                    >
+                      Sign Out
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDeleteAccount}
+                      className="text-xs font-bold text-slate-500 hover:text-rose-600 active:scale-95 transition-all cursor-pointer"
+                    >
+                      Delete Account
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Separated Legal & Policy Section */}
+              <div className="mt-8 pt-4 border-t border-slate-200/80 w-full max-w-xs flex flex-col items-center gap-2 text-center shrink-0">
+                <p className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">Legal &amp; Policy</p>
+                <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs font-semibold text-slate-500">
+                  <button
+                    type="button"
+                    onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'privacy'}))}
+                    className="hover:text-[#5621bf] transition-colors cursor-pointer"
+                  >
+                    Privacy Policy
+                  </button>
+                  <span className="text-slate-300">•</span>
+                  <button
+                    type="button"
+                    onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'terms'}))}
+                    className="hover:text-[#5621bf] transition-colors cursor-pointer"
+                  >
+                    Terms of Service
+                  </button>
+                  <span className="text-slate-300">•</span>
+                  <button
+                    type="button"
+                    onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'safety'}))}
+                    className="hover:text-[#5621bf] transition-colors cursor-pointer"
+                  >
+                    Privacy &amp; Safety
+                  </button>
+                </div>
+                <p className="text-[10px] font-medium text-slate-400 mt-1">© 2026 HOMETRACKER Inc.</p>
+              </div>
             </div>
           </div>
         )}
@@ -548,13 +607,10 @@ export default function HomePage() {
         <div className="w-full max-w-7xl mx-auto flex flex-col items-center my-auto">
           {/* Section Title */}
           <div className="text-center max-w-3xl mb-6 sm:mb-8">
-            <span className="px-3.5 py-1 rounded-full bg-purple-100 text-[#5621bf] text-xs font-black uppercase tracking-wider">
-              Controlled Early Access
-            </span>
             <h2 className="text-3xl sm:text-5xl font-black text-slate-900 tracking-tight leading-tight mt-3 mb-3">
               HomeTracker Pro <br className="hidden sm:inline" />
               <span className="bg-gradient-to-r from-[#5621bf] to-indigo-600 bg-clip-text text-transparent">
-                Community Program
+                Membership
               </span>
             </h2>
             <p className="text-sm sm:text-base text-slate-600 font-medium">
@@ -569,7 +625,7 @@ export default function HomePage() {
               <div>
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-xl sm:text-2xl font-black text-slate-900">HomeTracker Basic</h3>
-                  <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-700 font-extrabold text-xs">
+                  <span className="px-1 text-slate-700 font-extrabold text-xs">
                     Free Forever
                   </span>
                 </div>
@@ -584,23 +640,20 @@ export default function HomePage() {
 
                 <div className="space-y-2.5 mb-6">
                   <div className="flex items-center gap-2.5 text-xs sm:text-sm text-slate-700 font-medium">
-                    <span className="w-4 h-4 rounded-full bg-emerald-500 shrink-0 flex items-center justify-center text-white text-[9px] font-black">✓</span>
+                    <span className="w-4 h-4 rounded-full bg-[#5621bf] shrink-0 flex items-center justify-center text-white text-[9px] font-black">✓</span>
                     <span>Up to 4 Family Members in 1 Circle</span>
                   </div>
                   <div className="flex items-center gap-2.5 text-xs sm:text-sm text-slate-700 font-medium">
-                    <span className="w-4 h-4 rounded-full bg-emerald-500 shrink-0 flex items-center justify-center text-white text-[9px] font-black">✓</span>
+                    <span className="w-4 h-4 rounded-full bg-[#5621bf] shrink-0 flex items-center justify-center text-white text-[9px] font-black">✓</span>
                     <span>2 Saved Locations (Home Base + School)</span>
                   </div>
                   <div className="flex items-center gap-2.5 text-xs sm:text-sm text-slate-700 font-medium">
-                    <span className="w-4 h-4 rounded-full bg-emerald-500 shrink-0 flex items-center justify-center text-white text-[9px] font-black">✓</span>
+                    <span className="w-4 h-4 rounded-full bg-[#5621bf] shrink-0 flex items-center justify-center text-white text-[9px] font-black">✓</span>
                     <span>1 Static Daily Curfew Alert</span>
                   </div>
+
                   <div className="flex items-center gap-2.5 text-xs sm:text-sm text-slate-700 font-medium">
-                    <span className="w-4 h-4 rounded-full bg-emerald-500 shrink-0 flex items-center justify-center text-white text-[9px] font-black">✓</span>
-                    <span>24-Hour Location Trail History</span>
-                  </div>
-                  <div className="flex items-center gap-2.5 text-xs sm:text-sm text-slate-700 font-medium">
-                    <span className="w-4 h-4 rounded-full bg-emerald-500 shrink-0 flex items-center justify-center text-white text-[9px] font-black">✓</span>
+                    <span className="w-4 h-4 rounded-full bg-[#5621bf] shrink-0 flex items-center justify-center text-white text-[9px] font-black">✓</span>
                     <span>Standard Arrival &amp; Departure Alerts</span>
                   </div>
                 </div>
@@ -662,12 +715,9 @@ export default function HomePage() {
                     <span className="w-4 h-4 rounded-full shrink-0 flex items-center justify-center text-white text-[9px] font-black bg-[#5621bf]">✓</span>
                     <span>Custom Weekend &amp; Member Curfew Schedules</span>
                   </div>
-                  <div className="flex items-center gap-2.5 text-xs sm:text-sm text-slate-900 font-bold">
+
+                  <div className="flex items-center gap-2.5 text-xs sm:text-sm text-[#5621bf] font-bold">
                     <span className="w-4 h-4 rounded-full shrink-0 flex items-center justify-center text-white text-[9px] font-black bg-[#5621bf]">✓</span>
-                    <span>30-Day Location &amp; Breadcrumb History</span>
-                  </div>
-                  <div className="flex items-center gap-2.5 text-xs sm:text-sm text-emerald-700 font-bold">
-                    <span className="w-4 h-4 rounded-full shrink-0 flex items-center justify-center text-white text-[9px] font-black bg-emerald-600">✓</span>
                     <span>Direct Admin Partnership &amp; Feature Priority</span>
                   </div>
                 </div>
@@ -681,6 +731,12 @@ export default function HomePage() {
                   <span className="text-[11px] font-semibold text-slate-400 text-center">
                     Child &amp; Teen profiles cannot submit Pro applications.
                   </span>
+                </div>
+              ) : user?.pro_status === 'approved' ? (
+                <div className="w-full flex flex-col items-center gap-1.5">
+                  <div className="w-full py-3.5 sm:py-4 rounded-2xl bg-purple-100 text-[#5621bf] font-extrabold text-sm sm:text-base text-center border border-purple-200 cursor-default select-none flex items-center justify-center gap-2">
+                    <i className="fa-solid fa-shield-halved" /> You are a Pro Member
+                  </div>
                 </div>
               ) : (
                 <Link
@@ -699,12 +755,10 @@ export default function HomePage() {
       {/* Footer */}
       <footer className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-2 sm:gap-4 text-[10px] sm:text-xs font-semibold text-slate-500 border-t border-[#e8e8e8]/60 z-20 shrink-0">
         <div>© 2026 <span className="font-extrabold text-slate-800">HOMETRACKER Inc.</span> All rights reserved.</div>
-        <div className="flex items-center gap-4 sm:gap-6">
-          <button type="button" onClick={scrollToPricing} className="hover:text-[#5621bf] transition-colors cursor-pointer font-bold text-slate-700">Pricing</button>
-          <button type="button" onClick={() => setShowPaymentInfoModal(true)} className="hover:text-[#5621bf] transition-colors cursor-pointer">Payment Policy</button>
-          <a href="#features" className="hover:text-[#5621bf] transition-colors">Features</a>
-          <button type="button" onClick={() => setModal({ type: 'info', title: 'Privacy & Data Protection', content: 'InfoModal_Privacy' })} className="hover:text-[#5621bf] transition-colors cursor-pointer">Privacy</button>
-          <button type="button" onClick={() => setModal({ type: 'info', title: 'Terms of Service', content: 'InfoModal_Terms' })} className="hover:text-[#5621bf] transition-colors cursor-pointer">Terms</button>
+        <div className="flex flex-wrap items-center gap-4 sm:gap-6">
+          <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'privacy'}))} className="hover:text-[#5621bf] transition-colors cursor-pointer">Privacy Policy</button>
+          <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'terms'}))} className="hover:text-[#5621bf] transition-colors cursor-pointer">Terms of Service</button>
+          <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'safety'}))} className="hover:text-[#5621bf] transition-colors cursor-pointer">Privacy &amp; Safety</button>
         </div>
       </footer>
 
@@ -754,37 +808,43 @@ export default function HomePage() {
               </div>
 
               <div className="flex gap-3 items-start">
-                <div className="w-7 h-7 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0 mt-0.5">
+                <div className="w-7 h-7 rounded-xl bg-purple-100 text-[#5621bf] flex items-center justify-center shrink-0 mt-0.5">
                   <i className="fa-solid fa-comments text-xs" />
                 </div>
                 <div>
                   <p className="font-extrabold text-slate-900">Monthly Product Review Requirement</p>
                   <p className="text-slate-500 text-[11px] leading-relaxed">
-                    Every Pro user completes a quick monthly survey covering usage, issues, and feature ideas to keep their Pro access active.
+                    Every Pro user completes a quick monthly survey. Your map is temporarily paused when a review is due until completed.
                   </p>
                 </div>
               </div>
 
               <div className="flex gap-3 items-start">
-                <div className="w-7 h-7 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 mt-0.5">
-                  <i className="fa-solid fa-triangle-exclamation text-amber-600 text-sm" />
+                <div className="w-7 h-7 rounded-xl bg-slate-100 text-slate-800 flex items-center justify-center shrink-0 mt-0.5">
+                  <i className="fa-solid fa-triangle-exclamation text-slate-600 text-sm" />
                 </div>
                 <div>
                   <p className="font-extrabold text-slate-900">Access &amp; Quality Guidelines</p>
                   <p className="text-slate-500 text-[11px] leading-relaxed">
-                    All feedback submissions are reviewed. If a user repeatedly submits incomplete, fake, or unserious feedback, their Pro access may be removed after notice.
+                    All feedback submissions are reviewed. If a user repeatedly submits incomplete or fake feedback, Pro access may be revoked after notice.
                   </p>
                 </div>
               </div>
             </div>
 
-            <Link
-              href={user ? "/dashboard?action=request_pro" : "/auth"}
-              onClick={() => setShowPaymentInfoModal(false)}
-              className="w-full py-3 rounded-2xl bg-[#5621bf] hover:bg-[#431799] text-white font-extrabold text-xs shadow-md transition flex items-center justify-center gap-1.5"
-            >
-              <i className="fa-solid fa-paper-plane text-xs text-white" /> {user ? "Request Pro Access in Dashboard" : "Apply for Pro Beta Access"}
-            </Link>
+            {user?.pro_status === 'approved' ? (
+              <div className="w-full py-3 rounded-2xl bg-purple-100 text-[#5621bf] font-extrabold text-xs border border-purple-200 cursor-default flex items-center justify-center gap-1.5">
+                <i className="fa-solid fa-shield-halved text-xs" /> You are already a Pro Member
+              </div>
+            ) : (
+              <Link
+                href={user ? "/dashboard?action=request_pro" : "/auth"}
+                onClick={() => setShowPaymentInfoModal(false)}
+                className="w-full py-3 rounded-2xl bg-[#5621bf] hover:bg-[#431799] text-white font-extrabold text-xs shadow-md transition flex items-center justify-center gap-1.5"
+              >
+                <i className="fa-solid fa-paper-plane text-xs text-white" /> {user ? "Request Pro Access in Dashboard" : "Apply for Pro Membership"}
+              </Link>
+            )}
           </div>
         </div>
       )}
@@ -795,8 +855,8 @@ export default function HomePage() {
           <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-slate-100 flex flex-col items-center text-center">
             <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mb-4 text-xl ${
               modal.type === 'error' ? 'bg-rose-100 text-rose-600' :
-              modal.type === 'warning' ? 'bg-amber-100 text-amber-600' :
-              'bg-emerald-100 text-emerald-600'
+              modal.type === 'warning' ? 'bg-purple-100 text-purple-600' :
+              'bg-blue-100 text-blue-600'
             }`}>
               <i className={`fa-solid ${
                 modal.type === 'error' ? 'fa-triangle-exclamation' :

@@ -206,12 +206,23 @@ export default function InfoModal() {
     return () => window.removeEventListener('open-info-modal', handleOpen);
   }, []);
 
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   const currentContent = modalContent[type];
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
       {/* Backdrop */}
       <div 
         className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity"
@@ -219,7 +230,7 @@ export default function InfoModal() {
       />
       
       {/* Modal */}
-      <div className="relative w-[92vw] sm:max-w-lg bg-white/95 backdrop-blur-xl rounded-2xl sm:rounded-3xl shadow-2xl border border-white flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-200">
+      <div className="relative w-[92vw] sm:max-w-lg bg-white/95 backdrop-blur-xl rounded-2xl sm:rounded-3xl shadow-2xl border border-white flex flex-col max-h-[85vh] my-auto animate-in fade-in zoom-in-95 duration-200">
         
         {/* Header */}
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white rounded-t-2xl sm:rounded-t-3xl">
