@@ -410,6 +410,7 @@ export default function DashboardPage() {
   const mapInstanceRef = useRef(null);
   const markersRef = useRef({});
   const routeLinesRef = useRef([]);
+  const userInteractedWithMapRef = useRef(false);
 
   const profileMenuRef = useRef(null);
   const profileDropdownRef = useRef(null);
@@ -737,6 +738,12 @@ export default function DashboardPage() {
     }
   }, [user, adminTab, adminUserSearch]);
 
+  useEffect(() => {
+    if (user?.role === 'admin') {
+      fetchAdminData();
+    }
+  }, [user?.role, fetchAdminData]);
+
   const handleAdminActionRequest = async (requestId, action) => {
     try {
       const res = await fetch('/api/admin/requests', {
@@ -968,6 +975,8 @@ export default function DashboardPage() {
         const map = L.map(mapRef.current, { zoomControl: false }).setView([51.5074, -0.1278], 13);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
         L.control.zoom({ position: 'bottomright' }).addTo(map);
+        map.on('dragstart', () => { userInteractedWithMapRef.current = true; });
+        map.on('zoomstart', () => { userInteractedWithMapRef.current = true; });
         mapInstanceRef.current = map;
       }
 
@@ -1114,8 +1123,10 @@ export default function DashboardPage() {
       }
     });
 
-    if (bounds.length > 1) map.fitBounds(bounds, { padding: [50, 50] });
-    else if (bounds.length === 1) map.setView(bounds[0], 14);
+    if (!userInteractedWithMapRef.current) {
+      if (bounds.length > 1) map.fitBounds(bounds, { padding: [50, 50] });
+      else if (bounds.length === 1) map.setView(bounds[0], 14);
+    }
   }, [home, members, extraLocations, etaCache, subscription, user]);
 
   // ---- Actions ----
@@ -1528,7 +1539,7 @@ export default function DashboardPage() {
       </button>
 
       {/* Dropdown Menu */}
-      <div ref={notificationDropdownRef} style={{ display: 'none', opacity: 0, visibility: 'hidden' }} className="absolute -right-4 sm:right-0 mt-2 w-72 sm:w-80 max-w-[calc(100vw-24px)] bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-200/90 z-[1001] origin-top sm:origin-top-right overflow-hidden flex-col max-h-[400px]">
+      <div ref={notificationDropdownRef} style={{ display: 'none', opacity: 0, visibility: 'hidden' }} className="fixed top-20 left-4 right-4 sm:absolute sm:top-auto sm:left-auto sm:right-0 sm:mt-2 sm:w-80 sm:max-w-none bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-200/90 z-[1001] origin-top sm:origin-top-right overflow-hidden flex-col max-h-[400px]">
         <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
           <h3 className="text-sm font-black text-slate-900">Notifications</h3>
           {unreadNotifications.length > 0 && (
@@ -1835,18 +1846,13 @@ export default function DashboardPage() {
   };
 
   // ---- Child departure calculation ----
-  const [currentGPS, setCurrentGPS] = useState({ lat: null, lng: null });
-
-  useEffect(() => {
-    if (user?.role === 'child') {
-      const interval = setInterval(() => {
-        if (liveGPSRef.current.lat !== currentGPS.lat || liveGPSRef.current.lng !== currentGPS.lng) {
-          setCurrentGPS({ lat: liveGPSRef.current.lat, lng: liveGPSRef.current.lng });
-        }
-      }, 1000);
-      return () => clearInterval(interval);
-    }
-  }, [user, currentGPS.lat, currentGPS.lng]);
+  // Deriving currentGPS directly from the server-provided members list
+  // so the server is the single source of truth for the member's location
+  const selfMember = members.find(m => m.id === user?.id);
+  const currentGPS = {
+    lat: selfMember?.current_lat || null,
+    lng: selfMember?.current_lng || null
+  };
 
   // Also fetch own ETA for child
   useEffect(() => {
@@ -1856,7 +1862,7 @@ export default function DashboardPage() {
         fetchEta('self', currentGPS.lat, currentGPS.lng, home.home_lat, home.home_lng);
       }
     }
-  }, [user, currentGPS, home, fetchEta]);
+  }, [user?.role, currentGPS.lat, currentGPS.lng, home?.home_lat, home?.home_lng, fetchEta]);
 
   let childStatus = null;
   if (user?.role === 'child' && home?.home_lat && currentGPS.lat) {
@@ -2255,13 +2261,13 @@ export default function DashboardPage() {
                     <p className="text-[9px] sm:text-[10px] font-black uppercase text-[#5621bf]">Pro Members</p>
                     <p className="text-xl sm:text-2xl font-black text-[#5621bf]">{adminStats.pro_users}</p>
                   </div>
-                  <div className="p-4 rounded-2xl bg-purple-50 border border-purple-200 shadow-xs text-center space-y-1">
-                      <p className="text-[10px] font-black uppercase text-purple-800">Pending Requests</p>
-                      <p className="text-2xl font-black text-purple-900">{adminStats.pending_requests}</p>
+                  <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl bg-purple-50 border border-purple-200 shadow-xs text-center space-y-0.5 sm:space-y-1">
+                      <p className="text-[9px] sm:text-[10px] font-black uppercase text-purple-800">Pending Requests</p>
+                      <p className="text-xl sm:text-2xl font-black text-purple-900">{adminStats.pending_requests}</p>
                     </div>
-                    <div className="p-4 rounded-2xl bg-indigo-50 border border-indigo-200 shadow-xs text-center space-y-1">
-                      <p className="text-[10px] font-black uppercase text-indigo-800">Feedback Reviews</p>
-                      <p className="text-2xl font-black text-indigo-900">{adminStats.total_feedback}</p>
+                    <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl bg-indigo-50 border border-indigo-200 shadow-xs text-center space-y-0.5 sm:space-y-1">
+                      <p className="text-[9px] sm:text-[10px] font-black uppercase text-indigo-800">Feedback Reviews</p>
+                      <p className="text-xl sm:text-2xl font-black text-indigo-900">{adminStats.total_feedback}</p>
                     </div>
                   <div className="p-3 sm:p-4 rounded-xl sm:rounded-2xl bg-slate-50 border border-slate-200 text-center space-y-0.5 sm:space-y-1">
                     <p className="text-[9px] sm:text-[10px] font-black uppercase text-slate-400">Family Circles</p>
@@ -2328,10 +2334,10 @@ export default function DashboardPage() {
             {/* 2. PRO REQUESTS TAB */}
             {!loadingAdminData && adminTab === 'requests' && (
               <div className="space-y-3 sm:space-y-4">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <h4 className="font-black text-slate-900 text-xs sm:text-sm">Pro Applications ({adminRequests.length})</h4>
                   {adminRequests.length > 0 && (
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <button
                         onClick={() => setCollapsedRequests(!collapsedRequests)}
                         className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black transition cursor-pointer flex items-center gap-1.5 shadow-xs"
@@ -2525,10 +2531,10 @@ export default function DashboardPage() {
             {/* 4. MONTHLY FEEDBACK TAB */}
             {!loadingAdminData && adminTab === 'feedback' && (
               <div className="space-y-3 sm:space-y-4">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <h4 className="font-black text-slate-900 text-xs sm:text-sm">Monthly Feedback Reviews ({adminFeedbackList.length})</h4>
                   {adminFeedbackList.length > 0 && (
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <button
                         onClick={() => setCollapsedFeedback(!collapsedFeedback)}
                         className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black transition cursor-pointer flex items-center gap-1.5 shadow-xs"

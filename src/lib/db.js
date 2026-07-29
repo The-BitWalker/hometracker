@@ -341,7 +341,7 @@ export function generateFamilyCode() {
 // Helper: create session token cookie header value
 export function sessionCookieHeader(token) {
   const secureFlag = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-  return `ht_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${secureFlag}`;
+  return `ht_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000${secureFlag}`;
 }
 
 // Helper: clear session cookie
