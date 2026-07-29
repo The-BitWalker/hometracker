@@ -58,6 +58,7 @@ export default function HomePage() {
   const [modal, setModal] = useState(null);
   const [copyIcon, setCopyIcon] = useState('fa-regular fa-copy');
   const [passwordInput, setPasswordInput] = useState('');
+  const [isMaintenanceMode, setIsMaintenanceMode] = useState(false);
 
   const accountMenuRef = useRef(null);
   const isParent = user?.role === 'parent';
@@ -67,6 +68,10 @@ export default function HomePage() {
     fetch('/api/auth/session')
       .then((r) => r.json())
       .then((data) => {
+        if (data.maintenanceMode && data.user?.role !== 'admin') {
+          setIsMaintenanceMode(true);
+        }
+        
         if (data.authenticated && data.user) {
           setUser(data.user);
         } else {
@@ -103,6 +108,36 @@ export default function HomePage() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  if (isMaintenanceMode) {
+    return (
+      <div className="min-h-screen min-h-dvh flex flex-col relative overflow-hidden bg-slate-50 items-center justify-center p-6 text-center">
+        <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[800px] h-[350px] bg-gradient-to-b from-[#e2f0ff]/60 via-purple-100/30 to-transparent blur-3xl -z-10 pointer-events-none" />
+        <WaveBackground />
+        
+        <header className="absolute top-0 w-full px-6 py-4 flex items-center justify-center sm:justify-start z-20">
+          <Link href="/" className="flex items-center gap-2 group cursor-pointer">
+            <Image src="/logo.png" alt="HOMETRACKER Logo" width={36} height={36} className="w-8 h-8 object-contain" />
+            <span className="font-extrabold text-lg tracking-tight text-slate-900">HOME<span className="text-[#5621bf]">TRACKER</span></span>
+          </Link>
+        </header>
+
+        <div className="w-full max-w-md bg-white/80 backdrop-blur-xl border border-white rounded-3xl p-8 shadow-2xl relative z-10 space-y-6">
+          <div className="w-20 h-20 bg-purple-100 text-[#5621bf] rounded-3xl flex items-center justify-center mx-auto shadow-sm">
+            <i className="fa-solid fa-person-digging text-4xl"></i>
+          </div>
+          <div>
+            <h2 className="text-2xl font-black text-slate-900 tracking-tight">We are busy!</h2>
+            <p className="text-sm font-semibold text-slate-500 mt-2 leading-relaxed">
+              HomeTracker is currently undergoing scheduled maintenance to bring you new features and improvements. 
+              <br /><br />
+              Please check back later!
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const fallbackCopyTextToClipboard = (text) => {
     try {

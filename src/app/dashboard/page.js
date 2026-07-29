@@ -370,11 +370,12 @@ export default function DashboardPage() {
   const [adminFeedbackList, setAdminFeedbackList] = useState([]);
   const [adminUserSearch, setAdminUserSearch] = useState('');
   const [adminNoteInput, setAdminNoteInput] = useState('');
-  const [adminSettings, setAdminSettings] = useState(null);
+  const [adminSettings, setAdminSettings] = useState({});
   const [savingAdminSettings, setSavingAdminSettings] = useState(false);
   const [loadingAdminData, setLoadingAdminData] = useState(false);
   const [collapsedRequests, setCollapsedRequests] = useState(false);
   const [collapsedFeedback, setCollapsedFeedback] = useState(false);
+  const [selectedReqId, setSelectedReqId] = useState(null);
 
   // Handle URL action parameter (e.g. ?action=request_pro)
   useEffect(() => {
@@ -399,6 +400,7 @@ export default function DashboardPage() {
   
   const [notifications, setNotifications] = useState([]);
   const [showNotificationsMenu, setShowNotificationsMenu] = useState(false);
+  const [isMaintenanceMode, setIsMaintenanceMode] = useState(false);
   const unreadNotifications = notifications.filter(n => n.is_read === 0);
   
   const [joinCode, setJoinCode] = useState('');
@@ -523,6 +525,11 @@ export default function DashboardPage() {
           window.location.href = '/auth';
           return;
         }
+        
+        if (data.maintenanceMode && data.user?.role !== 'admin') {
+          setIsMaintenanceMode(true);
+        }
+
         setUser(data.user);
         setLoading(false);
 
@@ -706,13 +713,13 @@ export default function DashboardPage() {
     setLoadingAdminData(true);
     try {
       if (tab === 'stats') {
-        const res = await fetch('/api/admin/stats').then((r) => r.json());
-        if (res.stats) setAdminStats(res.stats);
+        const [statsData, settingsData] = await Promise.all([
+          fetch('/api/admin/stats').then((r) => r.ok ? r.json() : {}).catch(() => ({})),
+          fetch('/api/admin/settings').then((r) => r.ok ? r.json() : {}).catch(() => ({}))
+        ]);
         
-        try {
-          const settingsRes = await fetch('/api/admin/settings').then((r) => r.json());
-          if (settingsRes.settings) setAdminSettings(settingsRes.settings);
-        } catch(e) {}
+        if (statsData.stats) setAdminStats(statsData.stats);
+        if (settingsData.settings) setAdminSettings(settingsData.settings);
       } else if (tab === 'requests') {
         const res = await fetch('/api/admin/requests').then((r) => r.json());
         if (res.requests) setAdminRequests(res.requests);
@@ -771,6 +778,49 @@ export default function DashboardPage() {
     } finally {
       setSavingAdminSettings(false);
     }
+  };
+
+  const handleToggleMaintenanceMode = async (enable) => {
+    setSavingAdminSettings(true);
+    try {
+      const res = await fetch('/api/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ setting_key: 'maintenance_mode', setting_value: enable ? 'true' : 'false' }),
+      });
+      if (res.ok) {
+        setAdminSettings(prev => ({ ...prev, maintenance_mode: enable ? 'true' : 'false' }));
+        setModal({ type: 'success', title: 'Maintenance Mode Updated', message: `Maintenance mode has been ${enable ? 'enabled' : 'disabled'}.` });
+      } else {
+        setModal({ type: 'error', title: 'Error', message: 'Failed to update maintenance mode.' });
+      }
+    } catch (err) {
+      setModal({ type: 'error', title: 'Error', message: err.message });
+    } finally {
+      setSavingAdminSettings(false);
+    }
+  };
+
+  const handleForceSurvey = async () => {
+    setModal({
+      type: 'warning',
+      title: 'Force Monthly Survey',
+      message: 'This will reset the survey history, immediately forcing all active Pro users to submit a new survey. Are you sure?',
+      confirmText: 'Yes, Force Now',
+      onConfirm: async () => {
+        try {
+          const res = await fetch('/api/admin/force-survey', { method: 'POST' });
+          const data = await res.json();
+          if (res.ok) {
+            setModal({ type: 'success', title: 'Surveys Forced', message: data.message });
+          } else {
+            setModal({ type: 'error', title: 'Error', message: data.error || 'Failed to force surveys.' });
+          }
+        } catch (err) {
+          setModal({ type: 'error', title: 'Error', message: err.message });
+        }
+      }
+    });
   };
 
   const handleClearAllProRequests = async () => {
@@ -2013,6 +2063,36 @@ export default function DashboardPage() {
     </div>
   );
 
+  if (isMaintenanceMode) {
+    return (
+      <div className="min-h-screen min-h-dvh flex flex-col relative overflow-hidden bg-slate-50 items-center justify-center p-6 text-center">
+        <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[800px] h-[350px] bg-gradient-to-b from-[#e2f0ff]/60 via-purple-100/30 to-transparent blur-3xl -z-10 pointer-events-none" />
+        <WaveBackground />
+        
+        <header className="absolute top-0 w-full px-6 py-4 flex items-center justify-center sm:justify-start z-20">
+          <Link href="/" className="flex items-center gap-2 group cursor-pointer">
+            <Image src="/logo.png" alt="HOMETRACKER Logo" width={36} height={36} className="w-8 h-8 object-contain" />
+            <span className="font-extrabold text-lg tracking-tight text-slate-900">HOME<span className="text-[#5621bf]">TRACKER</span></span>
+          </Link>
+        </header>
+
+        <div className="w-full max-w-md bg-white/80 backdrop-blur-xl border border-white rounded-3xl p-8 shadow-2xl relative z-10 space-y-6">
+          <div className="w-20 h-20 bg-purple-100 text-[#5621bf] rounded-3xl flex items-center justify-center mx-auto shadow-sm">
+            <i className="fa-solid fa-person-digging text-4xl"></i>
+          </div>
+          <div>
+            <h2 className="text-2xl font-black text-slate-900 tracking-tight">We are busy!</h2>
+            <p className="text-sm font-semibold text-slate-500 mt-2 leading-relaxed">
+              HomeTracker is currently undergoing scheduled maintenance to bring you new features and improvements. 
+              <br /><br />
+              Please check back later!
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (user && user.role !== 'admin' && (!user.family_code || user.family_code === 'ADMIN_GLOBAL')) {
     return (
       <div className="min-h-screen min-h-dvh flex flex-col relative overflow-hidden bg-slate-50 items-center justify-center p-6">
@@ -2193,20 +2273,41 @@ export default function DashboardPage() {
                   <h4 className="font-black text-slate-900 text-xs sm:text-sm border-b border-slate-200 pb-2">Global System Settings</h4>
                   
                   {adminSettings && (
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                      <div>
-                        <p className="text-sm font-bold text-slate-800">Monthly Survey Interval</p>
-                        <p className="text-xs font-medium text-slate-500 max-w-lg mt-0.5">Choose how often Pro members are prompted for the feedback survey. Testing mode runs every minute. Production mode requires feedback on the 1st day of the next month following their previous submission.</p>
+                    <div className="space-y-4">
+                      {/* Survey Interval */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 bg-white border border-slate-100 rounded-xl shadow-sm">
+                        <div>
+                          <p className="text-sm font-bold text-slate-800">Monthly Survey Interval</p>
+                          <p className="text-xs font-medium text-slate-500 max-w-lg mt-0.5">Choose how often Pro members are prompted for the feedback survey. Testing mode runs every minute.</p>
+                        </div>
+                        <select 
+                          value={adminSettings?.survey_interval_mode || 'test_mode'}
+                          onChange={(e) => handleUpdateSurveyInterval(e.target.value)}
+                          disabled={savingAdminSettings}
+                          className="px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-[#5621bf] focus:ring-2 focus:ring-purple-100 rounded-xl text-xs font-bold text-slate-700 shadow-sm outline-none cursor-pointer w-full sm:w-auto min-w-[220px] transition-all"
+                        >
+                          <option value="test_mode">Test Mode (1 Minute)</option>
+                          <option value="first_of_next_month">Production (1st of Next Month)</option>
+                        </select>
                       </div>
-                      <select 
-                        value={adminSettings?.survey_interval_mode || 'test_mode'}
-                        onChange={(e) => handleUpdateSurveyInterval(e.target.value)}
-                        disabled={savingAdminSettings}
-                        className="p-2 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-700 shadow-sm min-w-[200px]"
-                      >
-                        <option value="test_mode">Test Mode (1 Minute)</option>
-                        <option value="first_of_next_month">Production (1st of Next Month)</option>
-                      </select>
+
+                      {/* Maintenance Mode */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 bg-white border border-slate-100 rounded-xl shadow-sm">
+                        <div>
+                          <p className="text-sm font-bold text-slate-800">Maintenance Mode</p>
+                          <p className="text-xs font-medium text-slate-500 max-w-lg mt-0.5">Suspend the site for all non-admins. Displays a "We are busy" landing page.</p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                          <input 
+                            type="checkbox" 
+                            className="sr-only peer"
+                            checked={adminSettings?.maintenance_mode === 'true'}
+                            onChange={(e) => handleToggleMaintenanceMode(e.target.checked)}
+                            disabled={savingAdminSettings}
+                          />
+                          <div className="w-11 h-6 bg-slate-200 rounded-full peer peer-focus:ring-4 peer-focus:ring-purple-300 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#5621bf]"></div>
+                        </label>
+                      </div>
                     </div>
                   )}
                 </div>

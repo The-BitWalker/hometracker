@@ -1,10 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getDb, ensureSchema, validateSession } from '@/lib/db';
-import { cookies } from 'next/headers';
 
 export async function GET(req) {
   await ensureSchema();
-  const cookieHeader = cookies().toString();
+  const cookieHeader = req.headers.get('cookie');
   const admin = await validateSession(cookieHeader);
 
   if (!admin || admin.role !== 'admin') {
@@ -27,7 +26,7 @@ export async function GET(req) {
 
 export async function POST(req) {
   await ensureSchema();
-  const cookieHeader = cookies().toString();
+  const cookieHeader = req.headers.get('cookie');
   const admin = await validateSession(cookieHeader);
 
   if (!admin || admin.role !== 'admin') {
