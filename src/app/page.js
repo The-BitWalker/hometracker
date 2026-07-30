@@ -687,27 +687,26 @@ export default function HomePage() {
                 </p>
 
                 <div className="flex items-baseline gap-1 mb-5">
-                  <span className="text-3xl sm:text-4xl font-black text-slate-900">€0</span>
-                  <span className="text-sm font-bold text-slate-400">/ forever</span>
+                  <span className="text-3xl sm:text-4xl font-black text-slate-900">Free</span>
+                  <span className="text-sm font-bold text-slate-400"> forever</span>
                 </div>
 
-                <div className="space-y-2.5 mb-6">
-                  <div className="flex items-center gap-2.5 text-xs sm:text-sm text-slate-700 font-medium">
-                    <span className="w-4 h-4 rounded-full bg-[#5621bf] shrink-0 flex items-center justify-center text-white text-[9px] font-black">✓</span>
-                    <span>Up to 4 Family Members in 1 Circle</span>
+                <div className="space-y-2.5 mb-6 opacity-80">
+                  <div className="flex items-center gap-2.5 text-xs sm:text-sm text-slate-500 font-medium">
+                    <span className="w-4 h-4 rounded-full bg-slate-300 shrink-0 flex items-center justify-center text-white text-[9px] font-black">!</span>
+                    <span>Limited to 4 Family Members</span>
                   </div>
-                  <div className="flex items-center gap-2.5 text-xs sm:text-sm text-slate-700 font-medium">
-                    <span className="w-4 h-4 rounded-full bg-[#5621bf] shrink-0 flex items-center justify-center text-white text-[9px] font-black">✓</span>
-                    <span>2 Saved Locations (Home Base + School)</span>
+                  <div className="flex items-center gap-2.5 text-xs sm:text-sm text-slate-500 font-medium">
+                    <span className="w-4 h-4 rounded-full bg-slate-300 shrink-0 flex items-center justify-center text-white text-[9px] font-black">!</span>
+                    <span>Only 2 Saved Locations (Cannot add more)</span>
                   </div>
-                  <div className="flex items-center gap-2.5 text-xs sm:text-sm text-slate-700 font-medium">
-                    <span className="w-4 h-4 rounded-full bg-[#5621bf] shrink-0 flex items-center justify-center text-white text-[9px] font-black">✓</span>
-                    <span>1 Static Daily Curfew Alert</span>
+                  <div className="flex items-center gap-2.5 text-xs sm:text-sm text-slate-500 font-medium">
+                    <span className="w-4 h-4 rounded-full bg-slate-300 shrink-0 flex items-center justify-center text-white text-[9px] font-black">!</span>
+                    <span>No Custom Schedules (1 Static Alert)</span>
                   </div>
-
-                  <div className="flex items-center gap-2.5 text-xs sm:text-sm text-slate-700 font-medium">
-                    <span className="w-4 h-4 rounded-full bg-[#5621bf] shrink-0 flex items-center justify-center text-white text-[9px] font-black">✓</span>
-                    <span>Standard Arrival &amp; Departure Alerts</span>
+                  <div className="flex items-center gap-2.5 text-xs sm:text-sm text-slate-500 font-medium">
+                    <span className="w-4 h-4 rounded-full bg-slate-300 shrink-0 flex items-center justify-center text-white text-[9px] font-black">!</span>
+                    <span>No Live Traffic or Predictive ETAs</span>
                   </div>
                 </div>
               </div>
@@ -767,11 +766,6 @@ export default function HomePage() {
                   <div className="flex items-center gap-2.5 text-xs sm:text-sm text-slate-900 font-bold">
                     <span className="w-4 h-4 rounded-full shrink-0 flex items-center justify-center text-white text-[9px] font-black bg-[#5621bf]">✓</span>
                     <span>Custom Weekend &amp; Member Curfew Schedules</span>
-                  </div>
-
-                  <div className="flex items-center gap-2.5 text-xs sm:text-sm text-[#5621bf] font-bold">
-                    <span className="w-4 h-4 rounded-full shrink-0 flex items-center justify-center text-white text-[9px] font-black bg-[#5621bf]">✓</span>
-                    <span>Direct Admin Partnership &amp; Feature Priority</span>
                   </div>
                 </div>
               </div>

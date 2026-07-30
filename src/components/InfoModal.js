@@ -65,8 +65,8 @@ const modalContent = {
           <li><strong>Emergency Disclaimer:</strong> HOMETRACKER is NOT an emergency response service. It should not be used as a primary communications channel during critical safety crises, natural disasters, or medical emergencies.</li>
         </ul>
 
-        <h3 className="text-slate-800 font-bold mt-4 text-base">4. Subscription Policies & Account Safety</h3>
-        <p>You are solely responsible for maintaining the confidentiality of your credentials and Family Codes. Standard data charges may apply from your mobile carrier. If premium subscription features are purchased, they will renew automatically unless cancelled in your account settings.</p>
+        <h3 className="text-slate-800 font-bold mt-4 text-base">4. Pro Membership & Account Safety</h3>
+        <p>You are solely responsible for maintaining the confidentiality of your credentials and Family Codes. Standard data charges may apply from your mobile carrier. HomeTracker Pro Membership is provided at no cost in exchange for regular product feedback. We reserve the right to revoke Pro Membership at any time if feedback is not provided.</p>
       </div>
     )
   },
