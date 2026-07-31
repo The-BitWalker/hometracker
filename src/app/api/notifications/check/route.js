@@ -65,7 +65,7 @@ async function ensureNotificationState(db, userId, familyCode) {
  * Handles midnight wrap-around.
  */
 function isWithinCurfewWindow(currentMinutes, curfewMinutes) {
-  const windowEnd = (curfewMinutes + CURFEW_WINDOW_HOURS * 60) % 1440;
+  const windowEnd = 5 * 60; // Curfew always expires at 05:00 AM
 
   if (curfewMinutes < windowEnd) {
     return currentMinutes >= curfewMinutes && currentMinutes < windowEnd;

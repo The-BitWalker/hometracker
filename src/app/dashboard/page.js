@@ -17,17 +17,20 @@ function getActiveCurfewViolations(memberLat, memberLng, home, extraLocations, c
   
   const now = new Date();
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
-  const currentDay = now.getDay(); // 0-6 (Sun-Sat)
+  let logicalDay = now.getDay(); // 0-6 (Sun-Sat)
+  if (currentMinutes < 5 * 60) {
+    logicalDay = (logicalDay + 6) % 7; // Shift to previous day for curfews before 5 AM
+  }
 
   const checkRule = (rule, locLat, locLng, locName, isHomeLoc) => {
     if (!rule || !rule.time) return;
-    if (rule.days && rule.days.length > 0 && !rule.days.includes(currentDay)) return;
+    if (rule.days && rule.days.length > 0 && !rule.days.includes(logicalDay)) return;
 
     const [h, m] = rule.time.split(':').map(Number);
     if (isNaN(h) || isNaN(m)) return;
 
     const curfewMinutes = h * 60 + m;
-    const windowEnd = (curfewMinutes + 4 * 60) % 1440;
+    const windowEnd = 5 * 60; // Curfew always expires at 05:00 AM
     
     let inWindow = false;
     if (curfewMinutes < windowEnd) {
@@ -68,11 +71,15 @@ function getActiveCurfewViolations(memberLat, memberLng, home, extraLocations, c
 // Helper: Get formatted text for today's curfew for a specific location
 function getTodayCurfewText(locId, homeTargetTime, customCurfews, isPlusCircle) {
   if (!isPlusCircle || !customCurfews || !customCurfews[locId]) {
-    if (locId === 'home') return homeTargetTime || 'Not set';
-    return 'Not set';
+    return homeTargetTime ? `Curfew today: ${homeTargetTime}` : null;
   }
-  
-  const currentDay = new Date().getDay();
+  const now = new Date();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  let logicalDay = now.getDay();
+  if (currentMinutes < 5 * 60) {
+    logicalDay = (logicalDay + 6) % 7;
+  }
+
   const rules = customCurfews[locId];
   if (!rules || rules.length === 0) {
     if (locId === 'home') return homeTargetTime || 'Not set';
@@ -80,7 +87,7 @@ function getTodayCurfewText(locId, homeTargetTime, customCurfews, isPlusCircle) 
   }
   
   // Find rule for today (or rule with no specific days assigned)
-  const todayRule = rules.find(r => !r.days || r.days.length === 0 || r.days.includes(currentDay));
+  const todayRule = rules.find(r => !r.days || r.days.length === 0 || r.days.includes(logicalDay));
   if (todayRule && todayRule.time) {
     return todayRule.time;
   }
@@ -1073,10 +1080,10 @@ export default function DashboardPage() {
       }
     });
 
-    // Member markers (children only)
+    // Member markers (all members)
     members.forEach((member) => {
-      if (member.role === 'child' && member.current_lat && member.current_lng) {
-        const initials = (member.name || 'C').substring(0, 2).toUpperCase();
+      if (member.current_lat && member.current_lng) {
+        const initials = (member.name || 'M').substring(0, 2).toUpperCase();
         const distKm = home?.home_lat ? calculateDistanceKm(member.current_lat, member.current_lng, home.home_lat, home.home_lng) : 999;
         const isAtHome = distKm <= AT_HOME_THRESHOLD_KM;
         const isPlusCircleMap = subscription?.is_plus || user?.pro_status === 'approved' || (subscription?.subscription_tier && subscription?.subscription_tier.toLowerCase() !== 'basic' && subscription?.subscription_tier.toLowerCase() !== 'free');
@@ -1085,7 +1092,7 @@ export default function DashboardPage() {
 
         const memberIcon = L.divIcon({
           className: 'custom-pin-wrap',
-          html: `<div class="custom-map-pin ${isAtHome ? 'pin-home' : isPastCurfew ? 'pin-curfew' : 'pin-member'} w-9 h-9"><span class="text-xs">${initials}</span></div>`,
+          html: `<div class="custom-map-pin ${isAtHome ? 'pin-home' : isPastCurfew ? 'pin-curfew' : (member.role === 'parent' ? 'pin-parent' : 'pin-member')} w-9 h-9"><span class="text-xs">${initials}</span></div>`,
           iconSize: [36, 36],
           iconAnchor: [18, 18],
         });
@@ -1693,7 +1700,13 @@ export default function DashboardPage() {
     );
   };
 
-  const renderProfileDropdown = () => (
+  const renderProfileDropdown = () => {
+    // Determine if the current user is past curfew to update their header avatar
+    const currentUserMember = members.find(m => m.id === user?.id);
+    const currentUserStatus = currentUserMember ? getMemberStatus(currentUserMember) : null;
+    const isCurrentUserPastCurfew = currentUserStatus?.isPastCurfew;
+
+    return (
     <div className="relative" ref={profileMenuRef}>
       <button
         onClick={() => setShowProfileMenu(!showProfileMenu)}
@@ -1703,7 +1716,7 @@ export default function DashboardPage() {
         aria-expanded={showProfileMenu}
         aria-haspopup="true"
       >
-        <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-full avatar-gradient text-white flex items-center justify-center text-[9px] sm:text-[10px] font-black shadow-sm shrink-0">
+        <div className={`w-6 h-6 sm:w-7 sm:h-7 rounded-full ${isCurrentUserPastCurfew ? 'bg-rose-600 animate-pulse' : 'avatar-gradient'} text-white flex items-center justify-center text-[9px] sm:text-[10px] font-black shadow-sm shrink-0`}>
           {(user?.name || 'U').substring(0, 2).toUpperCase()}
         </div>
         <span className="hidden md:block text-xs font-extrabold text-slate-900 truncate max-w-[100px]">
@@ -1716,7 +1729,7 @@ export default function DashboardPage() {
       <div ref={profileDropdownRef} style={{ display: 'none', opacity: 0, visibility: 'hidden' }} className="absolute -right-2 sm:right-0 mt-2 w-64 sm:w-72 max-w-[calc(100vw-24px)] bg-white/95 backdrop-blur-xl rounded-2xl p-3 sm:p-4 shadow-2xl border border-slate-200/90 z-[1001] max-h-[85vh] origin-top sm:origin-top-right overflow-y-auto">
           {/* Profile Header */}
           <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
-            <div className="w-10 h-10 rounded-full avatar-gradient text-white flex items-center justify-center text-sm font-black shadow-sm shrink-0">
+            <div className={`w-10 h-10 rounded-full ${isCurrentUserPastCurfew ? 'bg-rose-600 animate-pulse' : 'avatar-gradient'} text-white flex items-center justify-center text-sm font-black shadow-sm shrink-0`}>
               {(user?.name || 'U').substring(0, 2).toUpperCase()}
             </div>
             <div className="min-w-0 flex-1">
@@ -1830,6 +1843,7 @@ export default function DashboardPage() {
         </div>
     </div>
   );
+  };
 
   const handleDismissTip = () => {
     if (user?.id) localStorage.setItem('ht_tip_dismissed_' + user.id, 'true');
@@ -1921,7 +1935,7 @@ export default function DashboardPage() {
             const curfewMinutes = tH * 60 + tM;
             const now = new Date();
             const currentMinutes = now.getHours() * 60 + now.getMinutes();
-            const windowEnd = (curfewMinutes + 4 * 60) % 1440;
+            const windowEnd = 5 * 60; // Curfew always expires at 05:00 AM
             if (curfewMinutes < windowEnd) {
               basicPastCurfew = currentMinutes >= curfewMinutes && currentMinutes < windowEnd;
             } else {
@@ -1937,6 +1951,9 @@ export default function DashboardPage() {
           } else {
             const curfewDate = new Date();
             curfewDate.setHours(tH, tM, 0, 0);
+            if (tH >= 0 && tH < 5 && new Date().getHours() >= 5) {
+              curfewDate.setDate(curfewDate.getDate() + 1);
+            }
             const safeTravelMins = typeof travelMins === 'number' && !isNaN(travelMins) ? travelMins : 10;
             const leaveTimestamp = curfewDate.getTime() - safeTravelMins * 60000;
 
@@ -1995,7 +2012,6 @@ export default function DashboardPage() {
 
   // ---- Helper: get member status info ----
   const getMemberStatus = (member) => {
-    if (member.role === 'parent') return { label: 'Home', color: 'text-slate-500', badge: null };
     if (!member.current_lat || !home?.home_lat) return { label: 'Location unknown', color: 'text-slate-400', badge: null };
 
     const dist = calculateDistanceKm(member.current_lat, member.current_lng, home.home_lat, home.home_lng);
@@ -3095,7 +3111,7 @@ export default function DashboardPage() {
                   const status = getMemberStatus(member);
                   return (
                     <div key={member.id} onClick={() => focusMemberOnMap(member)} className="flex items-center gap-2.5 p-2.5 rounded-xl bg-white/80 border border-slate-200/60 shadow-sm group hover:border-[#5621bf]/40 hover:shadow-md transition-all cursor-pointer">
-                      <div className={`w-8 h-8 rounded-full ${mp ? 'bg-[#5621bf]' : 'bg-blue-500'} text-white flex items-center justify-center text-[10px] font-black shrink-0`}>
+                      <div className={`w-8 h-8 rounded-full ${status.isPastCurfew ? 'bg-rose-600 animate-pulse' : mp ? 'bg-[#5621bf]' : 'bg-blue-500'} text-white flex items-center justify-center text-[10px] font-black shrink-0`}>
                         {(member.name || 'M').substring(0, 2).toUpperCase()}
                       </div>
                       <div className="flex-1 min-w-0">
