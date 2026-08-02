@@ -375,7 +375,14 @@ export default function AuthPage() {
 
       {/* Footer */}
       <footer className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-2 sm:py-4 flex flex-col sm:flex-row items-center justify-between gap-2 sm:gap-4 text-[10px] sm:text-xs font-semibold text-slate-500 border-t border-[#e8e8e8]/60 z-20 shrink-0">
-        <div>© 2026 <span className="font-extrabold text-slate-800">HOMETRACKER Inc.</span> All rights reserved.</div>
+        <div className="flex items-center flex-wrap gap-1">
+          <span>© 2026 <span className="font-extrabold text-slate-800">HOMETRACKER Inc.</span> All rights reserved.</span>
+          <span className="hidden sm:inline mx-1">|</span>
+          <span>Made by <a href="https://nielscoert.vercel.app" target="_blank" rel="noopener noreferrer" className="hover:text-[#5621bf] transition-colors font-bold">Niels Coert</a></span>
+          <a href="https://github.com/the-bitwalker" target="_blank" rel="noopener noreferrer" className="ml-1 text-slate-400 hover:text-[#5621bf] transition-colors" title="GitHub">
+            <i className="fa-brands fa-github text-sm"></i>
+          </a>
+        </div>
         <div className="flex flex-wrap items-center gap-4 sm:gap-6">
           <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'privacy'}))} className="hover:text-[#5621bf] transition-colors cursor-pointer">Privacy Policy</button>
           <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('open-info-modal', {detail: 'terms'}))} className="hover:text-[#5621bf] transition-colors cursor-pointer">Terms of Service</button>
