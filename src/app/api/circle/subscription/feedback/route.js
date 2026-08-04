@@ -2,10 +2,15 @@ import { NextResponse } from 'next/server';
 import { getDb, ensureSchema, validateSession } from '@/lib/db';
 
 // Helper: get current month string YYYY-MM
-function getCurrentMonthYear() {
-  const d = new Date();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  return `${d.getFullYear()}-${month}`;
+function getCurrentMonthYear(request) {
+  const tzOffsetStr = request?.headers?.get('x-timezone-offset');
+  const offset = parseInt(tzOffsetStr || '0', 10);
+  
+  const localTimeMs = isNaN(offset) ? Date.now() : Date.now() - (offset * 60 * 1000);
+  const d = new Date(localTimeMs);
+  
+  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${month}`;
 }
 
 // GET: Check monthly feedback status & history for Pro member
@@ -18,7 +23,7 @@ export async function GET(request) {
   const db = getDb();
 
   try {
-    const currentMonth = getCurrentMonthYear();
+    const currentMonth = getCurrentMonthYear(request);
 
     const res = await db.execute({
       sql: `SELECT * FROM pro_feedback WHERE user_id = ? ORDER BY created_at DESC`,
@@ -77,7 +82,7 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Please fill out what worked well and what could be improved.' }, { status: 400 });
     }
 
-    const monthYear = getCurrentMonthYear();
+    const monthYear = getCurrentMonthYear(request);
     const feedbackId = crypto.randomUUID();
 
     await db.execute({

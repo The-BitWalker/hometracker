@@ -92,18 +92,28 @@ export async function GET(request) {
       if (fbRes.rows.length === 0) {
         feedbackDue = !isPostponed;
       } else {
-        const lastFbTime = new Date(fbRes.rows[0].created_at);
+        // Use the client's timezone offset if provided
+        const tzOffsetStr = request.headers.get('x-timezone-offset');
+        const offset = parseInt(tzOffsetStr || '0', 10);
         
+        // Convert the last feedback time to the user's local time (represented as a UTC Date object)
+        const lastFbTimeMs = new Date(fbRes.rows[0].created_at).getTime();
+        const userLastFbDate = new Date(isNaN(offset) ? lastFbTimeMs : lastFbTimeMs - (offset * 60 * 1000));
+        
+        // Convert current time to the user's local time (represented as a UTC Date object)
+        const userCurrentDate = new Date(isNaN(offset) ? Date.now() : Date.now() - (offset * 60 * 1000));
+
         if (intervalMode === 'first_of_next_month') {
-          // Calculate 1st day of the next month
-          let nextMonthYear = lastFbTime.getFullYear();
-          let nextMonth = lastFbTime.getMonth() + 1;
+          // Calculate 1st day of the next month using UTC methods on the shifted dates
+          let nextMonthYear = userLastFbDate.getUTCFullYear();
+          let nextMonth = userLastFbDate.getUTCMonth() + 1;
           if (nextMonth > 11) {
             nextMonth = 0;
             nextMonthYear++;
           }
-          const nextDueTime = new Date(nextMonthYear, nextMonth, 1).getTime();
-          feedbackDue = (Date.now() >= nextDueTime) && !isPostponed;
+          // nextDueLocalMs is the timestamp of 00:00 of the 1st of next month IN THE USER'S LOCAL TIME
+          const nextDueLocalMs = Date.UTC(nextMonthYear, nextMonth, 1);
+          feedbackDue = (userCurrentDate.getTime() >= nextDueLocalMs) && !isPostponed;
         } else {
           // 'test_mode' or default
           const TEST_INTERVAL_ONE_MIN = 60 * 1000; // 1 minute interval for testing

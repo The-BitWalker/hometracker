@@ -594,7 +594,7 @@ export default function DashboardPage() {
         fetch('/api/circle/members').then((r) => r.json()),
         fetch('/api/notifications').then((r) => r.json()),
         fetch('/api/circle/locations').then((r) => r.json()),
-        fetch('/api/circle/subscription').then((r) => r.json()).catch(() => ({ subscription_tier: 'basic' })),
+        fetch('/api/circle/subscription', { headers: { 'x-timezone-offset': new Date().getTimezoneOffset().toString() } }).then((r) => r.json()).catch(() => ({ subscription_tier: 'basic' })),
       ]);
 
       if (homeRes.home) setHome(homeRes.home);
@@ -616,7 +616,7 @@ export default function DashboardPage() {
            fetch('/api/circle/downgrade-cleanup', { method: 'POST' }).then(() => {
              Promise.all([
                fetch('/api/circle/locations').then(r => r.json()),
-               fetch('/api/circle/subscription').then(r => r.json()).catch(() => ({ subscription_tier: 'basic' }))
+               fetch('/api/circle/subscription', { headers: { 'x-timezone-offset': new Date().getTimezoneOffset().toString() } }).then(r => r.json()).catch(() => ({ subscription_tier: 'basic' }))
              ]).then(([newLoc, newSub]) => {
                if (newLoc.locations) setExtraLocations(newLoc.locations);
                if (newSub && !newSub.error) setSubscription(newSub);
@@ -694,7 +694,10 @@ export default function DashboardPage() {
     try {
       const res = await fetch('/api/circle/subscription/feedback', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-timezone-offset': new Date().getTimezoneOffset().toString()
+        },
         body: JSON.stringify({
           times_used: fbTimesUsed,
           members_used: fbMembersUsed,
